@@ -62,9 +62,9 @@ Validation: Rust 1.89.0 `cargo check --all-targets --locked`,
 and `cargo test --all-targets --locked` (eleven unit tests, twenty-two integration
 tests and five Phase 0 prototype tests on Linux).
 
-The CLI now decodes and prepares a reference before reporting that optimization
-and output remain pending in phases 3–5. It creates no output and preserves any
-existing destination. Input tests cover supported formats, alpha/opaque layouts,
+Phase 2 connected reference preparation to the CLI; Phase 3 now evaluates trials
+before reporting that search and output remain pending. It creates no output
+and preserves any existing destination. Input tests cover supported formats, alpha/opaque layouts,
 rounded and tiny scales, premultiplied-alpha filtering, animation rejection,
 header limits, malformed data, grayscale/16-bit conversion and explicit EXIF
 behavior. The committed synthetic fixtures have a reproducible generator and
@@ -73,16 +73,30 @@ for resize memory accounting and decoder/animation limitations.
 
 ## Phase 3 — Metric and candidate evaluation (M2)
 
-- [ ] Build reference `PixelSlice` with correct pixel width, height, stride and descriptor.
-- [ ] Construct `Ssimulacra2Reference` only once per image.
-- [ ] Implement `score(decoded_candidate)` for RGB and RGBA output; verify dimensions first.
-- [ ] Implement a trial evaluator: encode WebP in memory using fallible API, decode WebP, score and return size/mode/score/bytes.
-- [ ] Ensure quality `0..=100` and lossless are both supported.
-- [ ] Handle all encoder, decoder and metric errors; reject non-finite computed scores.
-- [ ] Add tests proving identical reference gives 100 in opaque cases; verify alpha case based on actual library behavior.
-- [ ] Verify score of output against reference using an independent integration-test scoring path.
+- [x] Build reference `PixelSlice` with correct pixel width, height, stride and descriptor.
+- [x] Construct `Ssimulacra2Reference` only once per image.
+- [x] Implement `score(decoded_candidate)` for RGB and RGBA output; verify dimensions first.
+- [x] Implement a trial evaluator: encode WebP in memory using fallible API, decode WebP, score and return size/mode/score/bytes.
+- [x] Ensure quality `0..=100` and lossless are both supported.
+- [x] Handle all encoder, decoder and metric errors; reject non-finite computed scores.
+- [x] Add tests proving identical reference gives 100 in opaque cases; verify alpha case based on actual library behavior.
+- [x] Verify score of output against reference using an independent integration-test scoring path.
 
 **Gate:** each trial has measured decoded score, with no disk writes.
+
+Validation: Rust 1.89.0 `cargo check --all-targets --locked`,
+`cargo fmt --all -- --check`, `cargo clippy --all-targets --locked -- -D warnings`,
+and `cargo test --all-targets --locked` (twelve unit tests, thirty integration
+tests and five Phase 0 prototype tests on Linux).
+
+`MetricReference` caches the reference once; `TrialEvaluator` returns only
+successfully encoded, decoded and scored trial bytes. Tests cover every integer
+lossy quality, lossless, alpha semantics, malformed/animated candidates,
+dimension/layout errors and non-finite scores. An independent decoder and the
+one-shot metric API verify trial scores for all supported formats, scales and
+tiny/transparent images. The CLI evaluates quality 75 and lossless as pipeline
+checks, then exits nonzero without output until phases 4–5 implement selection
+and writing. See [PLAN.md, section 15](PLAN.md#15-phase-3-metric-and-trial-evaluation).
 
 ## Phase 4 — Search and selection (M3)
 

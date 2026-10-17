@@ -1,8 +1,9 @@
 //! WebP SSIM Optimizer library.
 //!
-//! CLI validation, guarded still-image ingestion and reference preparation.
-//! The codec and metric prototype lives in `examples/api_spike.rs`.
+//! Guarded image preparation and measured in-memory WebP candidate evaluation.
 
 pub mod cli;
+pub mod encoder;
 pub mod input;
 pub mod limits;
+pub mod metric;

@@ -1,6 +1,6 @@
 # WebP SSIM Optimizer
 
-**Status: Phases 0–2 implemented (API prototype, CLI validation, decoding and resizing); WebP optimization and output are still pending.** Implementation is tracked in [TODO.md](TODO.md) and designed in [PLAN.md](PLAN.md). The flags below load and prepare a reference image; conversion examples will produce images after phases 3–5 are implemented.
+**Status: Phases 0–3 implemented (CLI validation, image preparation and in-memory WebP candidate scoring); search and output are still pending.** Implementation is tracked in [TODO.md](TODO.md) and designed in [PLAN.md](PLAN.md). The flags below prepare and evaluate a reference image; conversion examples will produce images after phases 4–5 are implemented.
 
 To validate the current prototype (it generates synthetic images in memory):
 
@@ -10,7 +10,7 @@ cargo run --locked --example api_spike
 cargo test --all-targets --locked
 ```
 
-`rust-toolchain.toml` selects Rust 1.89.0 with rustfmt and Clippy. A C compiler and archiver are required: `libwebp-sys` builds its bundled libwebp sources. `cargo run -- --help` and `--version` work. Input and output flags are required; supported still images are decoded, optionally resized, and normalized. The command then reports prepared dimensions and RGB8/RGBA8 layout on stderr and exits nonzero without writing output while optimization is pending. See [Phase 2 decisions](PLAN.md#14-phase-2-image-preparation-decisions) for input behavior and safeguards.
+`rust-toolchain.toml` selects Rust 1.89.0 with rustfmt and Clippy. A C compiler and archiver are required: `libwebp-sys` builds its bundled libwebp sources. `cargo run -- --help` and `--version` work. Input and output flags are required; supported still images are decoded, optionally resized, and normalized. The command evaluates lossy quality 75 and lossless in memory using one cached metric reference, then reports prepared dimensions and RGB8/RGBA8 layout on stderr and exits nonzero without writing output. `--verbose` prints each trial's size and decoded score. These two pipeline checks do not select an output or enforce `--threshold`; search and writing remain pending. See [Phase 2 decisions](PLAN.md#14-phase-2-image-preparation-decisions) for input behavior and [Phase 3 decisions](PLAN.md#15-phase-3-metric-and-trial-evaluation) for evaluation details.
 
 Convert a supported still image into a compact WebP file while enforcing a minimum **SSIMULACRA2** perceptual similarity score. Rather than choosing a fixed WebP encoder quality in advance, the tool encodes candidates in memory, decodes and scores them, and writes the smallest **tested** output that meets your requested quality floor.
 
@@ -126,7 +126,7 @@ malformed images, encoding/decoding failures, impossible thresholds and output
 errors will exit nonzero with details on stderr.
 
 Currently, help/version exit `0`, invalid arguments exit `2`, and path/input errors or
-the pending-optimization diagnostic exit `1`. Validation and image preparation preserve the
+the pending-search/output diagnostic exit `1`. Validation and candidate evaluation preserve the
 input and any existing destination, including rejecting canonical-path, symlink
 and hard-link collisions. Missing output paths require an existing parent
 directory. Input `-` is unsupported; output `-` selects stdout.
@@ -143,8 +143,11 @@ cargo build --release --locked
 The suite covers argument and allocation limits, CLI process behavior, all four
 input formats, rounded/tiny resizing, RGB/RGBA normalization, grayscale/16-bit
 conversion, transparent edges, animation rejection, corrupt/oversized inputs,
-EXIF behavior, source preservation and empty stdout on failure. It also retains
-the Phase 0 codec/metric API tests. Optimization and output remain for phases 3–5.
+EXIF behavior, source preservation and empty stdout on failure. Candidate tests
+cover every integer lossy quality, lossless, alpha semantics, dimension/layout
+validation and decode errors. Trial scores are verified through an independent
+decode and one-shot metric path. The suite also retains the Phase 0 API tests.
+Search and output remain for phases 4–5.
 
 The synthetic fixtures are committed under `tests/fixtures`, with provenance in
 [their README](tests/fixtures/README.md). Regenerate them with:

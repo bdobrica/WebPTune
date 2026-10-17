@@ -48,7 +48,7 @@ impl Pixels {
     }
 }
 
-/// Reference ready for metric/encoder construction in Phase 3.
+/// Processed reference ready for metric/encoder construction.
 #[derive(Debug)]
 pub struct PreparedImage {
     original_dimensions: (u32, u32),

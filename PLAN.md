@@ -1,6 +1,6 @@
 # Implementation Plan — WebP SSIM Optimizer
 
-**Status:** Phases 0–2 implemented; phases 3–8 planned · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
+**Status:** Phases 0–3 implemented; phases 4–8 planned · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
 
 ## 1. Purpose and scope
 
@@ -489,3 +489,51 @@ cover supported still formats, transparency/opaque alpha, tiny images, grayscale
 headers. Header-only BMP tests demonstrate limits fail before absent pixels are
 read. Tests cover source/destination preservation and empty stdout at the CLI
 boundary. Cross-platform execution remains Phase 7 work.
+
+## 15. Phase 3 metric and trial evaluation
+
+`metric::MetricReference::new(&Pixels)` validates processing dimensions and
+packed buffer length, builds an RGB8_SRGB or straight-alpha RGBA8_SRGB
+`PixelSlice` with a checked **byte stride per row**, then constructs one
+`Ssimulacra2Reference`. Its `score` method checks candidate dimensions and layout
+before comparison. Native scores are neither scaled nor clamped; NaN and
+infinity are errors. Repeated comparisons reuse the cached reference.
+
+`encoder::TrialEvaluator` borrows the immutable processed pixels and owns one
+metric reference. `evaluate(Mode)` accepts every integer lossy quality 0–100 or
+lossless (default effort 75). It initializes `WebPConfig` fallibly and uses
+`encode_advanced`, with the same lossless/alpha-compression settings as
+`encode_simple`. Dimensions and exact buffer lengths are checked before entering
+the encoder. Returned encoder, decoder and metric errors propagate with context;
+they are never converted to a score. The upstream wrapper still unwraps native
+picture initialization internally, as identified in Phase 0; this is not a
+guarantee against allocation failure or every upstream panic.
+
+Every trial, including lossless, is decoded and measured. `score_webp` rejects
+empty bytes, unreadable headers, animation and wrong dimensions before pixel
+allocation; it applies decoder limits and propagates pixel decode failures.
+Decoded pixels use the reference layout. An RGB candidate compared with an RGBA
+reference receives its actual opaque alpha, never the reference's alpha. An
+RGBA candidate for an RGB reference must be fully opaque before RGB conversion;
+transparency cannot be silently discarded. Lossless hidden RGB normalization
+is permitted, with its actual score retained.
+
+`Trial` exposes mode, measured score, size (derived from bytes) and owned encoded
+bytes. It makes no threshold or ordering decision. The evaluator writes no files
+and retains no collection of past trials; Phase 4 can retain only the best bytes
+and summaries. The CLI currently evaluates lossy quality 75 and lossless as two
+pipeline checks, printing trial details only with `--verbose`, then reports the
+processed dimensions and exits nonzero with empty stdout. These checks do not
+select an output or enforce `--threshold`; search and output remain phases 4–5.
+
+Integration tests independently decode trial bytes with the image convenience
+API, construct separate pixel views and call the one-shot
+`fast_ssim2::compute_ssimulacra2`, bypassing application scoring/caching helpers.
+Scores match exactly for JPEG/PNG/BMP/WebP sources, RGB/RGBA, scale 1 and 0.5,
+tiny and fully transparent images, qualities 0/75/100 and lossless. All 101 lossy
+qualities are exercised on RGB and RGBA. Identity scores are exactly 100 for the
+tested opaque and alpha fixtures; hidden RGB changes score 100, while partial
+RGB and alpha changes lower the score. Tests also cover invalid quality/layout,
+dimension mismatch, non-finite scores, empty/corrupt/truncated/animated candidate
+bytes, source/destination preservation and CLI stdout hygiene. No new
+dependencies are required.
