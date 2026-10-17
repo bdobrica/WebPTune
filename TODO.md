@@ -276,7 +276,7 @@ checkout. See [PLAN.md, section 25](PLAN.md#25-v010-release-tag).
 - [x] Add `--scale-width` and `--scale-height` arguments as alternatives to `--scale`, allowing users to specify maximum output dimensions. Resize the image to fit within the specified bounds while preserving its original aspect ratio, without cropping or stretching.
 - [x] Add `--search exhaustive` (all 101 integer lossy qualities + lossless), with guarantee limited to this set.
 - [x] Add `--skip-if-larger`, `--max-bytes`, JSON reporting or quiet mode.
-- [ ] Add batch/directory mode with bounded parallelism.
+- [x] Add batch/directory mode with bounded parallelism.
 - [ ] Add color profile support, EXIF orientation and 16-bit/HDR pathway.
 - [ ] Add richer WebP encoder tuning options and alpha-quality controls.
 - [ ] Add stdin input and interrupted-operation cancellation.
@@ -332,6 +332,26 @@ cleanup and quiet behavior with visible failures. Release checks confirmed an
 exact 52-byte cap, a 70-to-304-byte recompression skip and equal-size writes in
 both modes. Subsequent hosted platform validation is recorded in
 [PLAN.md, section 24](PLAN.md#24-hosted-platform-validation).
+
+Directory batches are available through `--batch -i INPUT_DIR -o OUTPUT_DIR`,
+with optional `--recursive` and `--jobs COUNT` (1–64, default 1). Existing,
+nonoverlapping roots are required. Discovery selects supported extensions,
+ignores symlink entries and preserves relative paths with `.webp` extensions.
+Complete collision/path preflight precedes writes. Active workers reuse the
+same per-image decode/resize/search/output policies; memory grows with jobs.
+Image failures do not stop other conversions; successful writes remain, failures
+exit `1`, and quiet keeps errors visible. README/help explain selection,
+overwrite/skip behavior, reports and limits. See
+[PLAN.md, section 26](PLAN.md#26-phase-9--directory-batches-and-bounded-workers).
+
+Local Linux validation (Rust 1.89.0): formatting, Clippy with denied warnings,
+all 111 tests, locked/offline release build and the extended release smoke
+checker passed. New tests independently score RGB/RGBA batch output, compare
+with single-file bytes, exercise recursion, supported formats, Unicode paths,
+collision/link preflight, continuation after failures, size policies, quiet
+reports, cleanup and actual worker bounds. Release smoke checks recursive,
+two-worker conversions against independently verified single-file bytes. The
+existing native CI matrix runs both the new tests and extended smoke checker.
 
 ## Release acceptance checklist
 

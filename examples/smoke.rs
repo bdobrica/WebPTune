@@ -34,6 +34,7 @@ fn main() -> Result<()> {
     );
 
     let directory = tempdir()?;
+    let mut verified = Vec::new();
     for name in ["rgb.png", "rgba.png"] {
         let source = directory.path().join(name);
         let original = fs::read(
@@ -98,10 +99,71 @@ fn main() -> Result<()> {
             "written score {score} is below 90"
         );
         println!("{name}: file/stdout match; 9x6; independently measured score {score:.6}");
+        verified.push((name, original, bytes));
     }
     ensure!(
         fs::read_dir(directory.path())?.count() == 3,
         "unexpected staging files"
     );
+
+    let batch_input = directory.path().join("images");
+    let batch_output = directory.path().join("converted");
+    fs::create_dir_all(batch_input.join("nested"))?;
+    fs::create_dir_all(batch_output.join("nested"))?;
+    for (name, original, _) in &verified {
+        let relative = if *name == "rgba.png" {
+            Path::new("nested").join(name)
+        } else {
+            name.into()
+        };
+        fs::write(batch_input.join(&relative), original)?;
+        fs::write(
+            batch_output.join(relative.with_extension("webp")),
+            b"replace this",
+        )?;
+    }
+    let batch = Command::new(&binary)
+        .arg("--batch")
+        .arg("-i")
+        .arg(&batch_input)
+        .arg("-o")
+        .arg(&batch_output)
+        .args([
+            "--recursive",
+            "--jobs",
+            "2",
+            "--threshold",
+            "90",
+            "--scale",
+            "0.5",
+            "--quiet",
+        ])
+        .output()?;
+    successful(&batch)?;
+    ensure!(
+        batch.stdout.is_empty() && batch.stderr.is_empty(),
+        "quiet batch leaked output"
+    );
+    for (name, original, bytes) in &verified {
+        let relative = if *name == "rgba.png" {
+            Path::new("nested").join(name)
+        } else {
+            name.into()
+        };
+        ensure!(
+            fs::read(batch_input.join(&relative))? == *original,
+            "batch modified source"
+        );
+        ensure!(
+            fs::read(batch_output.join(relative.with_extension("webp")))? == *bytes,
+            "batch output differs from independently verified single-image output"
+        );
+    }
+    ensure!(
+        fs::read_dir(&batch_output)?.count() == 2
+            && fs::read_dir(batch_output.join("nested"))?.count() == 1,
+        "unexpected batch staging files"
+    );
+    println!("batch: recursive two-worker RGB/RGBA output matches independently verified single-image bytes");
     Ok(())
 }

@@ -1,6 +1,6 @@
 # Implementation Plan — webptune
 
-**Status:** Phases 0–8 complete; v0.1.0 tagged after native Linux/macOS/Windows validation; Phase 9 maximum-dimension resizing, exhaustive search, size policies and quiet mode implemented · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
+**Status:** Phases 0–8 complete; v0.1.0 tagged after native Linux/macOS/Windows validation; Phase 9 maximum-dimension resizing, exhaustive search, size policies, quiet mode and bounded directory batches implemented · **Target:** v0.1.0 MVP plus Phase 9 follow-up · **Language:** Rust (edition 2021)
 
 ## 1. Purpose and scope
 
@@ -23,7 +23,7 @@ The objective is **minimize encoded bytes subject to a measured quality floor**,
 
 ### Non-goals for v0.1
 
-Animated images, batch/directory processing, upscaling, metadata/ICC profile preservation, EXIF orientation preservation beyond explicitly tested decoder behavior, HDR/16-bit fidelity, arbitrary WebP encoder parameter sweeps, global-optimum guarantees, streaming input, and an image-comparison GUI. Unsupported cases must be documented or rejected, not quietly mishandled.
+Animated images, upscaling, metadata/ICC profile preservation, EXIF orientation preservation beyond explicitly tested decoder behavior, HDR/16-bit fidelity, arbitrary WebP encoder parameter sweeps, global-optimum guarantees, streaming input, and an image-comparison GUI. Batch/directory processing was deferred from the MVP and is implemented after the v0.1.0 tag in section 26. Unsupported cases must be documented or rejected, not quietly mishandled.
 
 ## 2. Correctness decisions
 
@@ -64,6 +64,7 @@ webptune/
 ├── src/
 │   ├── main.rs              # parse CLI, exit codes, stderr
 │   ├── cli.rs               # clap input model and validation
+│   ├── batch.rs             # directory mapping, preflight and bounded workers
 │   ├── limits.rs            # pixel, memory and checked buffer arithmetic
 │   ├── input.rs             # decode, limits, resize, RGBA/RGB
 │   ├── metric.rs            # reusable reference and scoring
@@ -86,6 +87,9 @@ Keep modules reasonably small; merge files if the API is simpler than expected. 
 struct Options {
     input: PathBuf,
     output: OutputTarget,
+    batch: bool,
+    recursive: bool,
+    jobs: Option<usize>,
     threshold: f64,
     scale: f64,
     scale_width: Option<u32>,
@@ -311,7 +315,7 @@ Measure total wall time, peak RSS, number of trial encodes, encoding time, decod
 
 1. `--search heuristic|exhaustive` is implemented (section 22), with a minimum across the *fixed discrete candidate set* for exhaustive search. Additional intermediate search strategies remain optional future work.
 2. `--max-bytes`, `--skip-if-larger` and quiet reports are implemented (section 23). JSON reports and stdin input remain optional future work.
-3. Batch processing and parallel files, with explicit memory/concurrency caps.
+3. Directory batches with bounded workers are implemented (section 26). Per-image memory guards remain in force; a total batch memory cap remains future work.
 4. Preserve ICC/EXIF orientation and add color-managed / 16-bit paths.
 5. Advanced WebP parameters and alpha-quality tuning; support animation as a separate workflow.
 6. Standalone performance benchmark dataset and published platform-specific binaries.
@@ -1052,3 +1056,75 @@ The documentation commit recording completion follows the tagged commit on
 `main`.
 This closes Phase 8 and the MVP checklist. Distribution remains from source;
 no crates.io package, binary archives or GitHub Release were published.
+
+## 26. Phase 9 — Directory batches and bounded workers
+
+After the v0.1.0 tag, `--batch` adds explicit directory mode using the existing
+`-i` and `-o` paths. Both roots must be existing directories with disjoint
+canonical trees. Batch stdout is rejected. Without `--recursive`, only the input
+root's regular files are considered; recursion includes real subdirectories.
+Symlink entries and special files are ignored. Selection uses case-insensitive
+`.jpg`/`.jpeg`/`.png`/`.webp`/`.bmp` extensions, with content-based validation
+still performed by the existing loader for every selected image. Extensionless
+and other-extension files are ignored; an empty selection fails explicitly.
+
+`batch::BatchPlan` gathers and sorts paths, preserves relative directories and
+replaces the extension with `.webp`. Before creating any output or directories,
+it rejects duplicate output names, case-folded name conflicts, file/directory
+mapping conflicts, existing output components with incompatible types or
+symlinks, and destinations referring to any selected source. File identities
+are hashed with promptly closed handles, and hash matches are confirmed with
+`same_file`; large selections do not retain an open descriptor per input.
+Discovery and preflight errors abort the batch before writes. Name checks are
+conservative for portability, rather than a guarantee against every filesystem
+normalization rule or concurrent mutation.
+
+`--jobs COUNT` accepts integers 1–64 and defaults to one worker. `--jobs` and
+`--recursive` require `--batch`. A scoped thread pool contains at most the
+requested count, capped by the number of selected images. Workers claim indices
+atomically and execute the entire preparation/conversion pipeline before
+claiming another image. No decoded images or candidates are queued: each active
+worker owns and releases its reference, evaluator and search buffers. Discovery
+retains paths/options and completion retains small outcomes/errors. Existing
+per-image memory guards apply, but there is no total batch memory cap; aggregate
+memory can grow with worker count. There are no new dependencies or changes to
+encoder settings, quality selection or the single-image output policy.
+
+The CLI shares one conversion function between modes, including bounds/scale,
+threshold, heuristic/exhaustive search, inclusive byte ceiling and strictly
+larger-only skips. Nested output directories are created as needed and checked
+for symlink/type conflicts again. Each image retains staged replacement and
+late path validation. As with single-file output, concurrent filesystem changes
+cannot be fully excluded. Batch execution is not transactional: successful
+outputs remain, failed/skipped destinations are preserved, and created
+subdirectories can remain after skips or failures.
+
+Every selected image is attempted after ordinary per-image errors. Summary
+counts distinguish written, skipped and failed; any failed image yields exit
+`1`, while an entirely written/skipped batch exits `0`. Stdout stays empty.
+Reports identify source/destination paths, and a single stderr lock groups each
+image's verbose trial history with its summary. Success reports follow worker
+completion order. Failures are retained and reported in sorted source order
+after processing. Quiet suppresses successful image/skip reports and batch counts
+while preserving failure details and exit codes. The public planner's `execute`
+callback also permits library consumers to supply conversion/reporting behavior.
+
+New coverage includes all supported formats, content detection under a supported
+but incorrect extension, Unicode/space-containing paths, ignored extensions and
+symlinks, recursive layouts, independently scored RGB/RGBA output, exhaustive
+search, dimension bounds and equality with single-file output bytes. Tests
+exercise preflight collisions, cross-input hard links, output symlinks, source
+preservation, failure continuation with old destinations intact, per-image skip
+and byte caps, quiet/verbose behavior, cleanup, and true concurrency bounds.
+The worker test coordinates concurrent callbacks with a barrier, observes the
+peak in-flight count for one/two/four workers, checks each of 12 inputs is
+attempted exactly once, and verifies deterministic failure ordering.
+
+Local Linux validation (Rust 1.89.0): formatting, Clippy with denied warnings,
+all 111 tests, locked/offline release build and the extended release smoke
+checker passed. Release smoke runs a recursive two-worker RGB/RGBA batch,
+replaces old destinations, checks quiet output and source preservation, and
+compares payloads to independently scored single-file output. The existing
+Linux/macOS/Windows CI matrix runs the new tests and extended smoke checker;
+the earlier hosted results in section 24 describe the tagged implementation,
+not this later feature.

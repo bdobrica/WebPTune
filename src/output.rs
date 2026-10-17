@@ -129,6 +129,9 @@ mod tests {
         let args = Args {
             input,
             output: OutputTarget::File(directory.path().join("output.webp")),
+            batch: false,
+            recursive: false,
+            jobs: None,
             threshold: 80.0,
             scale: 1.0,
             scale_width: None,

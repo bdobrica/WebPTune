@@ -65,20 +65,40 @@ fn parse_max_bytes(value: &str) -> std::result::Result<u64, String> {
         .ok_or_else(|| format!("byte limit must be an integer in [1, {}]", u64::MAX))
 }
 
+fn parse_jobs(value: &str) -> std::result::Result<usize, String> {
+    value
+        .parse::<usize>()
+        .ok()
+        .filter(|jobs| (1..=64).contains(jobs))
+        .ok_or_else(|| "jobs must be an integer in [1, 64]".into())
+}
+
 /// Convert a still image to WebP with a minimum SSIMULACRA2 score.
 #[derive(Clone, Debug, Parser)]
 #[command(
     version,
-    after_help = "Examples:\n  webptune -i photo.png -o photo.webp -t 90 -s 0.5\n  webptune -i photo.png -o photo.webp --scale-width 1920 --scale-height 1080\n  webptune -i photo.png -o photo.webp --search exhaustive -t 90\n  webptune -i photo.png -o photo.webp --max-bytes 100000 --skip-if-larger --quiet\n  webptune -i photo.png -o - > photo.webp\n\nDimension bounds preserve aspect ratio (rounded to whole pixels) without cropping, stretching or upscaling. Use either bound or both, as an alternative to --scale.\n\nExhaustive search evaluates all integer lossy qualities 0 through 100 plus lossless. It guarantees the smallest feasible result only within this fixed set at the current encoder settings, and takes more work than the default heuristic.\n\n--max-bytes accepts a positive integer byte count and never relaxes the quality threshold. If no tested feasible result fits, it fails before writing. --skip-if-larger skips only results strictly larger than the source file, exits successfully and leaves the destination untouched (stdout is empty). Equal sizes are written. A failing byte cap takes priority over skipping. Quiet and verbose conflict; quiet keeps errors visible.\n\nExisting destination files are replaced only after the complete WebP is ready. The input file cannot be the destination. Reports go to stderr; '-o -' writes only WebP bytes to stdout. Shell redirection may truncate its target even when output is skipped."
+    after_help = "Examples:\n  webptune -i photo.png -o photo.webp -t 90 -s 0.5\n  webptune -i photo.png -o photo.webp --scale-width 1920 --scale-height 1080\n  webptune -i photo.png -o photo.webp --search exhaustive -t 90\n  webptune -i photo.png -o photo.webp --max-bytes 100000 --skip-if-larger --quiet\n  webptune --batch -i photos -o optimized --recursive --jobs 2\n  webptune -i photo.png -o - > photo.webp\n\nDimension bounds preserve aspect ratio (rounded to whole pixels) without cropping, stretching or upscaling. Use either bound or both, as an alternative to --scale.\n\nExhaustive search evaluates all integer lossy qualities 0 through 100 plus lossless. It guarantees the smallest feasible result only within this fixed set at the current encoder settings, and takes more work than the default heuristic.\n\n--max-bytes accepts a positive integer byte count and never relaxes the quality threshold. If no tested feasible result fits, it fails before writing. --skip-if-larger skips only results strictly larger than the source file, exits successfully and leaves the destination untouched (stdout is empty). Equal sizes are written. A failing byte cap takes priority over skipping. Quiet and verbose conflict; quiet keeps errors visible.\n\nBatch mode requires separate, existing input/output directories and supports .jpg/.jpeg/.png/.webp/.bmp files (case insensitive). --recursive includes subdirectories and preserves relative paths, replacing extensions with .webp. Symlink entries and other extensions are skipped. Conflicting output names and overlapping directory trees fail before writing. --jobs (1..=64, default 1) bounds concurrent image pipelines; memory use grows with jobs. Each image uses the same quality/resize/size options. Processing continues after image errors; any failure exits 1 and retains successful outputs. Batch stdout output is unsupported.\n\nExisting destination files are replaced only after the complete WebP is ready. The input file cannot be the destination. Reports go to stderr; '-o -' writes only WebP bytes to stdout. Shell redirection may truncate its target even when output is skipped."
 )]
 pub struct Args {
-    /// Source still image (JPEG, PNG, WebP or BMP); stdin is not supported
+    /// Source still image, or source directory with --batch; stdin is not supported
     #[arg(short, long, value_name = "PATH")]
     pub input: PathBuf,
 
-    /// Destination WebP path, or '-' for binary stdout
+    /// Destination WebP path, '-' for stdout, or existing directory with --batch
     #[arg(short, long, value_name = "PATH|-", value_parser = clap::builder::OsStringValueParser::new().try_map(|value: OsString| parse_output(&value)))]
     pub output: OutputTarget,
+
+    /// Convert supported files in a directory to a separate existing directory
+    #[arg(long)]
+    pub batch: bool,
+
+    /// Include subdirectories in batch mode; preserve the relative directory tree
+    #[arg(long, requires = "batch")]
+    pub recursive: bool,
+
+    /// Maximum concurrent batch conversions (1..=64); defaults to 1
+    #[arg(long, value_name = "COUNT", value_parser = parse_jobs, requires = "batch", allow_hyphen_values = true)]
+    pub jobs: Option<usize>,
 
     /// Minimum native SSIMULACRA2 score in [0, 100] (not a percentage)
     #[arg(short, long, default_value = "80", value_name = "SCORE", value_parser = parse_threshold, allow_hyphen_values = true)]
@@ -231,6 +251,9 @@ mod tests {
         let args = parse(&[]).unwrap();
         assert_eq!(args.input, PathBuf::from("in.png"));
         assert_eq!(args.output, OutputTarget::File("out.webp".into()));
+        assert!(!args.batch);
+        assert!(!args.recursive);
+        assert_eq!(args.jobs, None);
         assert_eq!(args.threshold, 80.0);
         assert_eq!(args.scale, 1.0);
         assert_eq!(args.resize(), Resize::Scale(1.0));
@@ -245,6 +268,29 @@ mod tests {
         assert_eq!(args.threshold, 90.0);
         assert_eq!(args.scale, 0.5);
         assert!(args.verbose);
+    }
+
+    #[test]
+    fn batch_options_require_explicit_mode_and_bounded_jobs() {
+        let args = parse(&["--batch", "--recursive", "--jobs", "64"]).unwrap();
+        assert!(args.batch && args.recursive);
+        assert_eq!(args.jobs, Some(64));
+        assert_eq!(parse(&["--batch"]).unwrap().jobs, None);
+        assert_eq!(parse(&["--batch", "--jobs=1"]).unwrap().jobs, Some(1));
+        for flags in [vec!["--recursive"], vec!["--jobs", "2"]] {
+            assert_eq!(
+                parse(&flags).unwrap_err().kind(),
+                clap::error::ErrorKind::MissingRequiredArgument
+            );
+        }
+        for value in ["0", "65", "-1", "1.5", "inf", "9999999999999999999999", ""] {
+            let error = parse(&["--batch", "--jobs", value]).unwrap_err();
+            assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
+            assert!(error
+                .to_string()
+                .contains("jobs must be an integer in [1, 64]"));
+        }
+        assert!(parse(&["--batch", "--jobs"]).is_err());
     }
 
     #[test]

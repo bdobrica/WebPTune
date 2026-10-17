@@ -42,6 +42,7 @@ source: the shell opens it before the application starts.
 - JPEG, PNG, WebP and BMP still-image input.
 - WebP output in either lossy or lossless mode.
 - Optional byte ceiling and skipping of results larger than the source file.
+- Directory batches with optional recursion and a configurable worker limit.
 - Perceptual quality target via native SSIMULACRA2 score (`0..100`, default `80`).
 - Optional Lanczos3 downscaling by a multiplier or maximum width/height.
 - Transparency-aware evaluation and alpha preservation.
@@ -102,8 +103,11 @@ webptune --input INPUT --output OUTPUT [OPTIONS]
 
 | Flag | Meaning | Default |
 |---|---|---|
-| `-i, --input <PATH>` | Input still image | Required |
-| `-o, --output <PATH\|->` | Destination WebP file, or `-` for stdout | Required |
+| `-i, --input <PATH>` | Input still image, or directory with `--batch` | Required |
+| `-o, --output <PATH\|->` | Destination WebP file, `-` for stdout, or existing directory with `--batch` | Required |
+| `--batch` | Convert a directory of supported images to a separate directory | Off |
+| `--recursive` | Include subdirectories and preserve their relative paths; requires `--batch` | Off |
+| `--jobs <COUNT>` | Concurrent image pipelines, integer `1..=64`; requires `--batch` | `1` |
 | `-t, --threshold <SCORE>` | Minimum native SSIMULACRA2 score (`0..=100`) | `80` |
 | `-s, --scale <FACTOR>` | Output width/height multiplier (`0 < scale <= 1`) | `1.0` |
 | `--scale-width <PIXELS>` | Maximum output width, preserving aspect ratio; alternative to `--scale` | Unbounded |
@@ -199,6 +203,58 @@ byte-limit failures take priority over skipping and still exit nonzero.
 stderr and the same exit codes and output bytes. It conflicts with `--verbose`.
 It does not suppress explicit help/version output. JSON reporting remains a
 possible future enhancement.
+
+### Directory batches
+
+Create a separate output directory, then convert the top-level images or include
+the entire directory tree:
+
+```bash
+mkdir -p optimized
+webptune --batch -i photos -o optimized
+webptune --batch -i photos -o optimized --recursive --jobs 2 --threshold 90
+```
+
+Batch mode is available on the current source branch after v0.1.0. Both roots
+must be existing directories; their canonical trees cannot overlap. Nested
+output directories are created as needed. For example, `photos/trip/image.jpg`
+becomes `optimized/trip/image.webp`. Existing destination files use the same
+staged replacement as single-image output.
+
+Discovery selects regular files with `.jpg`, `.jpeg`, `.png`, `.webp` or `.bmp`
+extensions, case insensitively. Other extensions, extensionless files, symlink
+entries and special files are ignored. Selected files are still decoded by
+contents; corrupt, animated or unsupported contents fail for that image. An
+empty selection is an error. `--recursive` includes subdirectories without
+following symlink entries. Batch mode requires directory output and rejects
+`-o -`.
+
+The complete mapping is checked before any output is written. Conflicts such as
+`image.jpg` and `image.png` mapping to `image.webp`, file/directory conflicts,
+and existing destinations that alias any selected input are errors. Name checks
+conservatively fold case, even on case-sensitive filesystems. Existing symlinks
+below the output root are refused, including destination symlinks. Root paths
+are resolved to canonical directories. Filesystem changes during conversion
+remain subject to the existing race limitations.
+
+`--jobs` limits the number of complete decode/search/write pipelines in flight.
+The default is **one worker**; choose additional workers according to available
+memory. The existing per-image estimate is not a total batch memory limit:
+several large images can multiply memory use. Discovery retains paths and
+options; only active workers hold image/metric/candidate buffers.
+
+Resize, threshold, search strategy, byte ceiling and size-based skip apply to
+each image independently. Every selected image is attempted after individual
+failures. Per-image reports go to stderr with source/destination paths, followed
+by written/skipped/failed counts; verbose history is grouped per image. Parallel
+success reports follow completion order; failures are listed in sorted source
+order after processing. Stdout stays empty. Quiet suppresses success, skip and
+count reports while keeping errors visible.
+
+The batch exits `0` if every image was written or skipped, and `1` if any image
+failed. Successful outputs remain in place; the batch has no rollback. A failed
+or skipped image preserves its destination, but created subdirectories may
+remain. Invalid arguments still exit `2`.
 
 ## How quality scoring works
 
@@ -303,6 +359,11 @@ writes, injected disk-full/flush errors and a real broken stdout connection.
 Size-policy tests cover inclusive caps, strict larger-only skips, failure
 precedence, source/destination preservation, empty stdout on skips/failures,
 both search modes, resized alpha, and quiet reporting with visible errors.
+Batch tests check recursive and top-level discovery, all supported formats,
+Unicode names, independent decoded quality/alpha, byte equality with single
+conversions, collision preflight, failure continuation, per-image size policies,
+source preservation and actual worker concurrency bounds. Release smoke also
+checks recursive two-worker output against the verified single-image bytes.
 The suite also retains the Phase 0 API tests.
 
 The executable matrix crosses 11 fixtures with scales 1/0.5, thresholds
