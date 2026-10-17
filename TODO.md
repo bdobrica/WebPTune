@@ -266,6 +266,7 @@ and the v0.1.0 tag remain open until actual native runs pass.
 
 ## Phase 9 — Deferred enhancements (NOT required for MVP)
 
+- [ ] Add `--scale-width` and `--scale-height` arguments as alternatives to `--scale`, allowing users to specify maximum output dimensions. Resize the image to fit within the specified bounds while preserving its original aspect ratio, without cropping or stretching.
 - [ ] Add `--search exhaustive` (all 101 integer lossy qualities + lossless), with guarantee limited to this set.
 - [ ] Add `--skip-if-larger`, `--max-bytes`, JSON reporting or quiet mode.
 - [ ] Add batch/directory mode with bounded parallelism.
