@@ -25,15 +25,24 @@ API findings and remaining input-detection limitations are recorded in
 
 ## Phase 1 — CLI and validation (M1)
 
-- [ ] Define clap `Args`: `-i/--input`, `-o/--output`, `-t/--threshold` default 80, `-s/--scale` default 1.0, `-v/--verbose`.
-- [ ] Use a typed `OutputTarget::Stdout | File(PathBuf)` for `-o -`.
-- [ ] Reject non-finite thresholds, thresholds outside [0,100], scales outside (0,1].
-- [ ] Provide actionable CLI help and parse errors.
-- [ ] Add source/destination collision validation, including canonical path checks where possible.
-- [ ] Establish application pixel/memory safety limits and checked dimension arithmetic.
-- [ ] Add CLI argument unit tests and parsing integration tests.
+- [x] Define clap `Args`: `-i/--input`, `-o/--output`, `-t/--threshold` default 80, `-s/--scale` default 1.0, `-v/--verbose`.
+- [x] Use a typed `OutputTarget::Stdout | File(PathBuf)` for `-o -`.
+- [x] Reject non-finite thresholds, thresholds outside [0,100], scales outside (0,1].
+- [x] Provide actionable CLI help and parse errors.
+- [x] Add source/destination collision validation, including canonical path checks where possible.
+- [x] Establish application pixel/memory safety limits and checked dimension arithmetic.
+- [x] Add CLI argument unit tests and parsing integration tests.
 
 **Gate:** invalid input exits nonzero without writing output.
+
+Validation: Rust 1.89.0 `cargo check --all-targets --locked`,
+`cargo fmt --all -- --check`, `cargo clippy --all-targets --locked -- -D warnings`,
+and `cargo test --all-targets --locked` (nine unit tests, ten CLI integration
+tests, and five Phase 0 prototype tests on Linux).
+The CLI now validates arguments and paths; valid requests still exit nonzero
+with an explicit pending-pipeline diagnostic and no output. The reusable header
+and processing limits will be connected to decoding/resizing in Phase 2.
+See [PLAN.md, section 13](PLAN.md#13-phase-1-cli-and-validation-decisions).
 
 ## Phase 2 — Decode, normalize and resize (M1)
 

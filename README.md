@@ -1,6 +1,6 @@
 # WebP SSIM Optimizer
 
-**Status: Phase 0 setup and API validation implemented; optimizer CLI still planned.** The Rust package and a runnable codec/metric prototype are available. Implementation is tracked in [TODO.md](TODO.md) and designed in [PLAN.md](PLAN.md). The image-conversion usage examples below become executable after the CLI is implemented.
+**Status: Phases 0–1 implemented (API prototype, CLI parsing and validation); image conversion is still pending.** Implementation is tracked in [TODO.md](TODO.md) and designed in [PLAN.md](PLAN.md). The flags below work for validation; conversion examples will produce images after the processing and output phases are implemented.
 
 To validate the current prototype (it generates synthetic images in memory):
 
@@ -10,7 +10,7 @@ cargo run --locked --example api_spike
 cargo test --all-targets --locked
 ```
 
-`rust-toolchain.toml` selects Rust 1.89.0 with rustfmt and Clippy. A C compiler and archiver are required: `libwebp-sys` builds its bundled libwebp sources. `cargo run -- --help` and `--version` work; running the main binary without flags reports that optimization is not implemented and exits nonzero. See [Phase 0 findings](PLAN.md#12-phase-0-api-validation-findings) for API details and constraints.
+`rust-toolchain.toml` selects Rust 1.89.0 with rustfmt and Clippy. A C compiler and archiver are required: `libwebp-sys` builds its bundled libwebp sources. `cargo run -- --help` and `--version` work. Input and output flags are required; valid arguments and paths currently report that conversion is pending and exit nonzero without writing output. See [Phase 0 findings](PLAN.md#12-phase-0-api-validation-findings) for codec APIs and [Phase 1 decisions](PLAN.md#13-phase-1-cli-and-validation-decisions) for validation details.
 
 Convert a supported still image into a compact WebP file while enforcing a minimum **SSIMULACRA2** perceptual similarity score. Rather than choosing a fixed WebP encoder quality in advance, the tool encodes candidates in memory, decodes and scores them, and writes the smallest **tested** output that meets your requested quality floor.
 
@@ -115,11 +115,20 @@ The optimization may choose lossless because it yields a smaller file (especiall
 - **Image metadata:** EXIF, XMP and ICC profiles are not promised to carry over into the WebP output.
 - **Resizing:** ratios above 1 are rejected; resulting dimensions are at least 1×1.
 - **Source safety:** overwrite of the input path is refused. File destinations are written safely through a temporary file when possible.
-- **Maximum dimensions:** the application will reject excessively large decoded images for memory safety; exact configurable limits are implementation details documented in the release.
+- **Safety limits established in Phase 1:** 100 million source pixels, 16,383 pixels per output axis, and a 1 GiB estimated working-memory budget including metric padding. This conservative estimate permits 2000×2000 at full scale, while 2048×2048 requires downscaling. These reusable guards will be applied to image headers and processing in Phase 2; they are not a measured peak-memory guarantee.
 
 ## Exit behavior
 
-A successful command exits with code `0`. Invalid CLI arguments, unsupported or malformed images, encoding/decoding failures, impossible requested thresholds and output errors exit nonzero. The tool does not claim success unless the **decoded output** has been checked against the requested score. Detailed errors are written to stderr. Specific numeric nonzero exit codes will be finalized with the CLI implementation.
+In the completed optimizer, a successful command will exit with code `0` after
+verifying the decoded output against the requested score. Unsupported or
+malformed images, encoding/decoding failures, impossible thresholds and output
+errors will exit nonzero with details on stderr.
+
+Currently, help/version exit `0`, invalid arguments exit `2`, and path errors or
+the pending-conversion diagnostic exit `1`. Parsing and path checks preserve the
+input and any existing destination, including rejecting canonical-path, symlink
+and hard-link collisions. Missing output paths require an existing parent
+directory. Input `-` is unsupported; output `-` selects stdout.
 
 ## Development
 
@@ -130,7 +139,12 @@ cargo test --all-targets
 cargo build --release --locked
 ```
 
-The current suite runs the API spike checks for RGB/RGBA round trips, metric identity and distortion, transparency, codec dimension boundaries, tiny images and animation detection APIs. Coverage for photographs, corrupted inputs, resizing, stdout purity and full optimizer behavior is planned for later phases.
+The current suite includes nine argument/limit unit tests, ten CLI process tests,
+and five API spike tests on Linux. It covers numeric boundaries, defaults, help,
+required flags, native paths, collisions, file preservation, empty stdout on
+failure, checked dimension arithmetic, memory policy, RGB/RGBA round trips,
+transparency and animation detection APIs. Image ingestion, resizing and full
+optimizer behavior remain for later phases.
 
 See [PLAN.md](PLAN.md) for architecture, edge cases, algorithm decisions, release gates and deferred features. See [TODO.md](TODO.md) for the task-by-task checklist.
 

@@ -12,7 +12,11 @@ anyhow = "1"
 clap = { version = "~4.5", features = ["derive"] }
 fast-ssim2 = "0.9"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp"] }
+same-file = "1"
 webp = { version = "0.3", default-features = false }
+
+[dev-dependencies]
+tempfile = "3"
 
 [[example]]
 name = "api_spike"

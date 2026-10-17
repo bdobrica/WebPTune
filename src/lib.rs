@@ -1,4 +1,7 @@
 //! WebP SSIM Optimizer library.
 //!
-//! Phase 0 validates the codec and metric APIs in `examples/api_spike.rs`.
-//! The optimization pipeline will be added in subsequent phases.
+//! CLI validation and allocation guards for the upcoming optimization pipeline.
+//! The codec and metric prototype lives in `examples/api_spike.rs`.
+
+pub mod cli;
+pub mod limits;

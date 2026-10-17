@@ -1,6 +1,6 @@
 # Implementation Plan — WebP SSIM Optimizer
 
-**Status:** Phase 0 implemented; phases 1–8 planned · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
+**Status:** Phases 0–1 implemented; phases 2–8 planned · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
 
 ## 1. Purpose and scope
 
@@ -64,6 +64,7 @@ webp-ssim-optimizer/
 ├── src/
 │   ├── main.rs              # parse CLI, exit codes, stderr
 │   ├── cli.rs               # clap input model and validation
+│   ├── limits.rs            # pixel, memory and checked buffer arithmetic
 │   ├── input.rs             # decode, limits, resize, RGBA/RGB
 │   ├── metric.rs            # reusable reference and scoring
 │   ├── encoder.rs           # lossy/lossless WebP candidates
@@ -86,7 +87,7 @@ struct Options {
     input: PathBuf,
     output: OutputTarget,
     threshold: f64,
-    scale: f32,
+    scale: f64,
     verbose: bool,
 }
 
@@ -141,7 +142,7 @@ Terminal behavior:
 
 ## 5. Dependencies and toolchain
 
-Phase 0 dependency configuration (exact resolutions are recorded in `Cargo.lock`):
+Current dependency configuration (exact resolutions are recorded in `Cargo.lock`):
 
 ```toml
 [package]
@@ -153,12 +154,19 @@ rust-version = "1.89"
 [dependencies]
 clap = { version = "~4.5", features = ["derive"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp"] }
+same-file = "1"
 webp = { version = "0.3", default-features = false }
 fast-ssim2 = "0.9"
 anyhow = "1"
+
+[dev-dependencies]
+tempfile = "3"
 ```
 
 Phase 0 uses `anyhow` for prototype and CLI errors; typed library errors can be introduced with the application pipeline. Clap stays in the 4.5 family. Disabling `webp`'s default `img` feature avoids enabling additional `image` codecs transitively; the spike uses raw RGB/RGBA buffers. The MSRV and pinned development toolchain are Rust 1.89. CI should eventually test that version and stable.
+
+Phase 1 adds `same-file` for portable file-identity checks (including hard links)
+and `tempfile` for isolated filesystem integration tests.
 
 API checkpoints:
 
@@ -173,7 +181,7 @@ Avoid calling `webp::Encoder::encode` or `encode_lossless` directly when their i
 ### Phase A — Parse and load
 
 1. Parse CLI and validate finite ranges before doing I/O.
-2. Resolve input/output collision risk; read header/dimensions and enforce a conservative image pixel budget (configurable internally, suggested **100 million pixels maximum**, with stricter memory checks as needed).
+2. Resolve input/output collision risk; read header/dimensions and enforce the **100 million source pixels maximum** and **1 GiB estimated working-memory budget** established in section 13.
 3. Decode exactly one supported still image. Report unsupported animation/color cases; reject malformed and truncated data.
 4. Optionally resize once with Lanczos3. Handle small images: both resulting dimensions must be >=1.
 5. Normalize to owned `RgbImage` if opaque, otherwise `RgbaImage`. Keep reference pixel memory alive.
@@ -364,3 +372,49 @@ See [fast-ssim2 input semantics and limits](https://docs.rs/fast-ssim2/0.9.0/fas
 
 See the [WebP decoder](https://docs.rs/image/0.25.10/image/codecs/webp/struct.WebPDecoder.html)
 and [PNG decoder](https://docs.rs/image/0.25.10/image/codecs/png/struct.PngDecoder.html).
+
+## 13. Phase 1 CLI and validation decisions
+
+`src/cli.rs` defines the testable Clap `Args` and typed `OutputTarget`.
+Input/output are required; only the exact output value `-` selects stdout.
+Paths retain native OS strings, including non-UTF-8 names on Unix. Threshold
+and scale are parsed as `f64`, checked for finiteness, and constrained to
+`[0,100]` and `(0,1]` respectively. Using `f64` avoids prematurely rounding tiny
+positive scales to zero; dimension rounding remains Phase 2 work.
+
+Path validation opens the existing regular input read-only and checks canonical
+paths and `same-file` handle identity against existing regular destinations.
+This catches relative, symlink and hard-link aliases. Dangling output symlinks
+are rejected; a missing destination requires an existing parent directory. No
+output or parent is created or truncated. Existing output identity must be
+readable for the conservative collision check. Filesystem changes after this
+check remain possible; Phase 5 must revalidate and use safe replacement.
+Literal stdin input `-` is rejected (use `./-` for a file named `-`).
+
+`src/limits.rs` establishes reusable, allocation-free checks:
+
+- Nonzero dimensions and at most **100,000,000 source pixels**, even when scaling.
+- Checked row-stride and buffer-length arithmetic, including `usize` conversion
+  and the platform's `isize::MAX` allocation boundary.
+- At most **16,383 pixels per output axis**, applied after scaling so larger
+  sources can be downscaled.
+- At most **1,073,741,824 estimated bytes** (1 GiB), using
+  `8 * source_pixels + 256 * max(output_width, 8) * max(output_height, 8)`.
+  Eight bytes per source pixel allows for 16-bit RGBA decode. The processing
+  allowance reserves space for normalized/candidate pixels, both alpha
+  backgrounds, cached metric pyramids, scratch and encoder buffers. Metric
+  reflection padding is included. For example, 2000×2000 without scaling fits;
+  2048×2048 requires a smaller scale under this policy.
+
+The memory estimate is an initial conservative policy, **not a measured peak-RSS
+guarantee** or an OS allocation cap. Phase 2 must invoke the source guard before
+large decode allocations and the combined guard before resize/metric allocation,
+and configure decoder allocation limits. Phase 7 will measure and refine it.
+The guard functions are tested now; Phase 1 does not decode image headers.
+
+Clap help/version exit 0; argument errors exit 2. Path errors and the explicit
+pending-conversion error exit 1, with empty stdout and diagnostics on stderr.
+Valid requests intentionally fail until Phases 2–5 supply the image pipeline.
+Integration tests prove no output is created and existing files are preserved
+for validation failures and pending-pipeline requests. Unix symlink/non-UTF-8
+cases are conditional tests; macOS/Windows execution remains a Phase 7 task.
