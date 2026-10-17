@@ -23,7 +23,7 @@ impl Fixture {
     }
 
     fn run(&self, output: &Path, extra: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"))
+        Command::new(env!("CARGO_BIN_EXE_webptune"))
             .current_dir(self.dir.path())
             .arg("--input")
             .arg(&self.input)
@@ -56,7 +56,7 @@ fn assert_failure(output: &Output, diagnostic: &str) {
 #[test]
 fn help_and_version_work_without_required_paths() {
     for flag in ["--help", "-h", "--version", "-V"] {
-        let output = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"))
+        let output = Command::new(env!("CARGO_BIN_EXE_webptune"))
             .arg(flag)
             .output()
             .unwrap();
@@ -65,6 +65,8 @@ fn help_and_version_work_without_required_paths() {
         let stdout = String::from_utf8(output.stdout).unwrap();
         if flag == "--help" || flag == "-h" {
             for text in [
+                "Usage: webptune",
+                "webptune -i photo.png",
                 "--input",
                 "--output",
                 "--threshold",
@@ -77,7 +79,10 @@ fn help_and_version_work_without_required_paths() {
                 assert!(stdout.contains(text), "{text:?} missing from {stdout}");
             }
         } else {
-            assert!(stdout.contains(env!("CARGO_PKG_VERSION")));
+            assert_eq!(
+                stdout.trim(),
+                concat!("webptune ", env!("CARGO_PKG_VERSION"))
+            );
         }
     }
 }
@@ -85,7 +90,7 @@ fn help_and_version_work_without_required_paths() {
 #[test]
 fn required_arguments_and_unknown_options_fail() {
     for args in [vec![], vec!["-i", "source.png"], vec!["-o", "out.webp"]] {
-        let output = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"))
+        let output = Command::new(env!("CARGO_BIN_EXE_webptune"))
             .args(args)
             .output()
             .unwrap();
@@ -119,7 +124,7 @@ fn valid_arguments_write_webp_and_replace_existing_destinations() {
         .unwrap();
     }
     // Short path flags must work at the executable boundary too.
-    let output = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"))
+    let output = Command::new(env!("CARGO_BIN_EXE_webptune"))
         .arg("-i")
         .arg(&fixture.input)
         .arg("-o")
@@ -205,7 +210,7 @@ fn symlink_aliases_and_dangling_symlinks_are_rejected() {
     );
     let input_alias = fixture.dir.path().join("input-alias.png");
     symlink(&fixture.input, &input_alias).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"))
+    let output = Command::new(env!("CARGO_BIN_EXE_webptune"))
         .arg("-i")
         .arg(&input_alias)
         .arg("-o")
@@ -232,7 +237,7 @@ fn missing_input_directory_input_and_stdin_are_rejected() {
         (fixture.dir.path().to_path_buf(), "must be a regular file"),
         (PathBuf::from("-"), "stdin input is not supported"),
     ] {
-        let output = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"))
+        let output = Command::new(env!("CARGO_BIN_EXE_webptune"))
             .arg("-i")
             .arg(input)
             .arg("-o")
@@ -266,7 +271,7 @@ fn stdout_target_has_no_text_payload_on_failure() {
 
     // A file named '-' is still accessible through an explicit path.
     fs::write(fixture.dir.path().join("-"), SOURCE).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"))
+    let output = Command::new(env!("CARGO_BIN_EXE_webptune"))
         .current_dir(fixture.dir.path())
         .args(["-i", "./-", "-o", "./destination.webp"])
         .output()

@@ -1,7 +1,7 @@
 use clap::Parser;
-use webp_ssim_optimizer::cli::Args;
-use webp_ssim_optimizer::encoder::TrialEvaluator;
-use webp_ssim_optimizer::{input, output, search};
+use webptune::cli::Args;
+use webptune::encoder::TrialEvaluator;
+use webptune::{input, output, search};
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();

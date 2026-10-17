@@ -7,11 +7,11 @@ use std::time::{Duration, Instant};
 use anyhow::{ensure, Result};
 use clap::{Parser, Subcommand};
 use image::{imageops::FilterType, Rgb, RgbImage, Rgba, RgbaImage};
-use webp_ssim_optimizer::encoder::TrialEvaluator;
-use webp_ssim_optimizer::input::{self, Pixels};
-use webp_ssim_optimizer::limits::validate_source_dimensions;
-use webp_ssim_optimizer::metric::MetricReference;
-use webp_ssim_optimizer::search;
+use webptune::encoder::TrialEvaluator;
+use webptune::input::{self, Pixels};
+use webptune::limits::validate_source_dimensions;
+use webptune::metric::MetricReference;
+use webptune::search;
 
 #[derive(Parser)]
 struct Args {

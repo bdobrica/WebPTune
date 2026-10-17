@@ -1,4 +1,4 @@
-//! WebP SSIM Optimizer library.
+//! webptune library.
 //!
 //! Guarded image preparation, measured WebP selection and safe output writing.
 

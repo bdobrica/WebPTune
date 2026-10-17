@@ -45,8 +45,8 @@ jobs:
       - name: Run all tests, including native file replacement
         run: cargo test --all-targets --locked
       - name: Build release binary and smoke checker
-        run: cargo build --release --locked --bin webp-ssim-optimizer --example smoke
+        run: cargo build --release --locked --bin webptune --example smoke
       - name: Verify release file and stdout conversions
-        run: cargo run --release --locked --example smoke -- target/release/webp-ssim-optimizer${{ matrix.exe }}
+        run: cargo run --release --locked --example smoke -- target/release/webptune${{ matrix.exe }}
       - name: Check that validation did not modify tracked files
         run: git diff --exit-code

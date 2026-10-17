@@ -83,7 +83,7 @@ def main():
                 parser.error("build name must be a single filename component")
             directory = Path(directory).resolve()
             example = directory / "examples" / f"benchmark{suffix}"
-            binary = directory / f"webp-ssim-optimizer{suffix}"
+            binary = directory / f"webptune{suffix}"
             executables = [binary] if args.memory_only else [example, binary]
             metadata["builds"][name] = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in executables}
             with (args.output / f"{name}.csv").open("w", newline="") as output:

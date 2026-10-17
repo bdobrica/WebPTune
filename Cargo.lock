@@ -607,7 +607,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "webp-ssim-optimizer"
+name = "webptune"
 version = "0.1.0"
 dependencies = [
  "anyhow",

@@ -16,7 +16,7 @@ fn replacing_existing_destination_with_hard_link_preserves_other_link() {
     fs::write(&input, SOURCE).unwrap();
     fs::write(&destination, b"old destination").unwrap();
     fs::hard_link(&destination, &other_link).unwrap();
-    let result = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"))
+    let result = Command::new(env!("CARGO_BIN_EXE_webptune"))
         .arg("-i")
         .arg(&input)
         .arg("-o")
@@ -49,7 +49,7 @@ fn destination_open_without_delete_sharing_preserves_old_file_on_failure() {
         .share_mode(1)
         .open(&destination)
         .unwrap();
-    let result = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"))
+    let result = Command::new(env!("CARGO_BIN_EXE_webptune"))
         .arg("-i")
         .arg(&input)
         .arg("-o")
@@ -79,7 +79,7 @@ fn replacing_unrelated_symlink_replaces_entry_and_preserves_referent() {
     fs::write(&input, SOURCE).unwrap();
     fs::write(&referent, b"unrelated file").unwrap();
     symlink(&referent, &destination).unwrap();
-    let result = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"))
+    let result = Command::new(env!("CARGO_BIN_EXE_webptune"))
         .arg("-i")
         .arg(&input)
         .arg("-o")
@@ -114,7 +114,7 @@ fn broken_stdout_returns_nonzero_and_preserves_source() {
     let (reader, writer) = UnixStream::pair().unwrap();
     drop(reader);
     let writer: OwnedFd = writer.into();
-    let result = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"))
+    let result = Command::new(env!("CARGO_BIN_EXE_webptune"))
         .arg("-i")
         .arg(&input)
         .args(["-o", "-"])
@@ -137,7 +137,7 @@ fn invalid_input_preserves_destination_and_leaves_no_temporary_output() {
     let destination = directory.path().join("output.webp");
     fs::write(&input, b"invalid image").unwrap();
     fs::write(&destination, b"existing destination").unwrap();
-    let result = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"))
+    let result = Command::new(env!("CARGO_BIN_EXE_webptune"))
         .arg("-i")
         .arg(&input)
         .arg("-o")
@@ -206,7 +206,7 @@ mod permissions {
                 fs::write(&destination, b"existing destination").unwrap();
             }
             for target in [destination.as_os_str(), std::ffi::OsStr::new("-")] {
-                let result = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"))
+                let result = Command::new(env!("CARGO_BIN_EXE_webptune"))
                     .arg("-i")
                     .arg(&input)
                     .arg("-o")
@@ -253,7 +253,7 @@ mod permissions {
                     return;
                 }
             }
-            let result = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"))
+            let result = Command::new(env!("CARGO_BIN_EXE_webptune"))
                 .arg("-i")
                 .arg(&input)
                 .arg("-o")

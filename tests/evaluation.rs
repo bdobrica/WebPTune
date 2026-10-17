@@ -5,10 +5,10 @@ use std::process::Command;
 use fast_ssim2::{compute_ssimulacra2, PixelDescriptor, PixelSlice};
 use image::{ImageFormat, Rgb, RgbImage, Rgba, RgbaImage};
 use tempfile::tempdir;
-use webp_ssim_optimizer::encoder::{Mode, TrialEvaluator};
-use webp_ssim_optimizer::input::{self, Pixels};
-use webp_ssim_optimizer::metric::MetricReference;
-use webp_ssim_optimizer::search::{self, SearchOptions};
+use webptune::encoder::{Mode, TrialEvaluator};
+use webptune::input::{self, Pixels};
+use webptune::metric::MetricReference;
+use webptune::search::{self, SearchOptions};
 
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -319,7 +319,7 @@ fn evaluator_preserves_source_and_cli_writes_selected_bytes_and_verbose_trials()
     assert_eq!(prepared.pixels().as_bytes(), before);
     assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 2);
     for destination in [output.as_os_str(), std::ffi::OsStr::new("-")] {
-        let result = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"))
+        let result = Command::new(env!("CARGO_BIN_EXE_webptune"))
             .arg("-i")
             .arg(&input)
             .arg("-o")
@@ -506,7 +506,7 @@ fn file_and_stdout_match_selected_bytes_and_independent_scores() {
                     fs::write(&destination, b"existing destination").unwrap();
                 }
                 for target in [destination.as_os_str(), std::ffi::OsStr::new("-")] {
-                    let mut command = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"));
+                    let mut command = Command::new(env!("CARGO_BIN_EXE_webptune"));
                     command.arg("-i").arg(&source).arg("-o").arg(target).args([
                         "-s",
                         &scale.to_string(),

@@ -31,8 +31,8 @@ Local validation commands from the checkout root:
 cargo fmt --all -- --check
 cargo clippy --all-targets --locked -- -D warnings
 cargo test --all-targets --locked
-cargo build --release --locked --bin webp-ssim-optimizer --example smoke
-cargo run --release --locked --example smoke -- target/release/webp-ssim-optimizer
+cargo build --release --locked --bin webptune --example smoke
+cargo run --release --locked --example smoke -- target/release/webptune
 ```
 
 Append `.exe` to the final binary path on Windows. The smoke checker launches
@@ -54,7 +54,7 @@ Verify `git status --porcelain` remains empty afterwards.
 On the verified release commit with a clean working tree, create the local tag:
 
 ```bash
-git tag -a v0.1.0 -m "WebP SSIM Optimizer v0.1.0"
+git tag -a v0.1.0 -m "webptune v0.1.0"
 ```
 
 Confirm its commit and annotation with `git show v0.1.0`. Pushing a tag or

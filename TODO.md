@@ -1,4 +1,4 @@
-# Implementation Checklist — WebP SSIM Optimizer
+# Implementation Checklist — webptune
 
 This list implements [PLAN.md](PLAN.md). Work roughly top to bottom; check a task only after its acceptance criteria are met. **MVP boundary:** complete phases 0–8. Phase 9 is optional follow-up.
 

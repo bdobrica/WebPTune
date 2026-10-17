@@ -7,13 +7,17 @@ added to the application.
 See [RESULTS.md](RESULTS.md) for the reviewed Linux baseline, memory assessment
 and platform validation status.
 
+The archived Phase 7 metadata under `results/` predates the `webptune` rename.
+It retains the original executable paths and hashes as recorded; the commands
+below and new benchmark runs use `webptune`.
+
 ## Reproduce
 
 Run from the repository root with Rust 1.89.0, a C compiler and Python 3.9+:
 
 ```bash
-cargo build --release --locked --bin webp-ssim-optimizer --example benchmark
-RUSTFLAGS="-C target-cpu=native" CARGO_TARGET_DIR=target/native cargo build --release --locked --bin webp-ssim-optimizer --example benchmark
+cargo build --release --locked --bin webptune --example benchmark
+RUSTFLAGS="-C target-cpu=native" CARGO_TARGET_DIR=target/native cargo build --release --locked --bin webptune --example benchmark
 target/release/examples/benchmark generate --sizes 256,768
 python3 scripts/benchmark.py --build portable=target/release --build native=target/native/release
 ```

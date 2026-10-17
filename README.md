@@ -1,4 +1,4 @@
-# WebP SSIM Optimizer
+# webptune
 
 Convert JPEG, PNG, WebP or BMP still images to WebP with a minimum measured
 **SSIMULACRA2** score. The tool encodes candidates, decodes and scores them, then
@@ -17,8 +17,8 @@ From the repository root, with the [build prerequisites](#installation) installe
 
 ```bash
 cargo build --release --locked
-target/release/webp-ssim-optimizer -i tests/fixtures/rgb.png -o target/quickstart.webp
-target/release/webp-ssim-optimizer -i tests/fixtures/rgb.png -o - > target/quickstart-stdout.webp
+target/release/webptune -i tests/fixtures/rgb.png -o target/quickstart.webp
+target/release/webptune -i tests/fixtures/rgb.png -o - > target/quickstart-stdout.webp
 ```
 
 Both outputs are WebP images; the conversion summary goes to stderr. Replace the
@@ -28,8 +28,8 @@ install it on your PATH.
 On Windows, build with the same Cargo command, then run these from PowerShell:
 
 ```powershell
-.\target\release\webp-ssim-optimizer.exe -i tests/fixtures/rgb.png -o target/quickstart.webp
-cmd /d /c "target\release\webp-ssim-optimizer.exe -i tests/fixtures/rgb.png -o - > target\quickstart-stdout.webp"
+.\target\release\webptune.exe -i tests/fixtures/rgb.png -o target/quickstart.webp
+cmd /d /c "target\release\webptune.exe -i tests/fixtures/rgb.png -o - > target\quickstart-stdout.webp"
 ```
 
 The stdout example uses `cmd` for byte-preserving redirection, including when
@@ -72,12 +72,12 @@ Open a terminal in your downloaded or cloned checkout and build:
 cargo build --release --locked
 ```
 
-The executable is `target/release/webp-ssim-optimizer` (`.exe` on Windows).
+The executable is `target/release/webptune` (`.exe` on Windows).
 To install it on your Cargo binary PATH from this checkout:
 
 ```bash
 cargo install --path . --locked
-webp-ssim-optimizer --version
+webptune --version
 ```
 
 The package is not published to crates.io (`publish = false`); installation is
@@ -95,7 +95,7 @@ Native CPU tuning can produce a binary unsuitable for other machines. Normal rel
 ## Usage
 
 ```text
-webp-ssim-optimizer --input INPUT --output OUTPUT [OPTIONS]
+webptune --input INPUT --output OUTPUT [OPTIONS]
 ```
 
 | Flag | Meaning | Default |
@@ -111,25 +111,25 @@ webp-ssim-optimizer --input INPUT --output OUTPUT [OPTIONS]
 Example: encode a PNG using the default perceptual target:
 
 ```bash
-webp-ssim-optimizer -i photo.png -o photo.webp
+webptune -i photo.png -o photo.webp
 ```
 
 Example: preserve a higher perceptual target:
 
 ```bash
-webp-ssim-optimizer -i photo.jpg -o photo.webp --threshold 90
+webptune -i photo.jpg -o photo.webp --threshold 90
 ```
 
 Example: scale an image to half its width and height before encoding:
 
 ```bash
-webp-ssim-optimizer -i large.png -o small.webp --scale 0.5 --threshold 85
+webptune -i large.png -o small.webp --scale 0.5 --threshold 85
 ```
 
 Example: write binary WebP to stdout for redirection:
 
 ```bash
-webp-ssim-optimizer -i image.png -o - > optimized.webp
+webptune -i image.png -o - > optimized.webp
 ```
 
 Only image bytes go to stdout in that mode; logs and errors go to stderr. This matters when piping into another process.
@@ -192,8 +192,8 @@ output contains only WebP bytes. Input `-` is unsupported.
 cargo fmt --all -- --check
 cargo clippy --all-targets --locked -- -D warnings
 cargo test --all-targets --locked
-cargo build --release --locked --bin webp-ssim-optimizer --example smoke
-cargo run --release --locked --example smoke -- target/release/webp-ssim-optimizer
+cargo build --release --locked --bin webptune --example smoke
+cargo run --release --locked --example smoke -- target/release/webptune
 ```
 
 On Windows append `.exe` to the smoke command's final path. The smoke checker

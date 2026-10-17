@@ -1,10 +1,10 @@
-# Implementation Plan — WebP SSIM Optimizer
+# Implementation Plan — webptune
 
 **Status:** Phases 0–6 implemented; Phase 7 local performance/robustness validated, macOS/Windows checks pending; Phase 8 documentation/CI implemented, hosted validation and tag pending · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
 
 ## 1. Purpose and scope
 
-Build `webp-ssim-optimizer`, a dependable CLI that converts a supported still image to WebP, optionally resizes it, and selects a small valid WebP output whose **decoded pixels** achieve at least a user-defined SSIMULACRA2 score compared with the processed reference image.
+Build `webptune`, a dependable CLI that converts a supported still image to WebP, optionally resizes it, and selects a small valid WebP output whose **decoded pixels** achieve at least a user-defined SSIMULACRA2 score compared with the processed reference image.
 
 The objective is **minimize encoded bytes subject to a measured quality floor**, not merely find the lowest encoder quality. Search is performed in memory; only the chosen output is written. It is a *heuristic optimizer*: v0.1 does not promise a globally minimal WebP across every possible encoder configuration.
 
@@ -52,7 +52,7 @@ Initial implementation targets 8-bit, SDR, sRGB-like raster pixels. Decoding or 
 ## 3. Suggested architecture
 
 ```text
-webp-ssim-optimizer/
+webptune/
 ├── Cargo.toml
 ├── Cargo.lock
 ├── README.md
@@ -115,7 +115,7 @@ Do not retain every candidate's byte buffer indefinitely. Retain the current bes
 ## 4. CLI contract
 
 ```text
-webp-ssim-optimizer \
+webptune \
   --input INPUT \
   --output OUTPUT|- \
   [--threshold 80] \
@@ -146,7 +146,7 @@ Current dependency configuration (exact resolutions are recorded in `Cargo.lock`
 
 ```toml
 [package]
-name = "webp-ssim-optimizer"
+name = "webptune"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.89"
@@ -810,7 +810,7 @@ independent release smoke check. Both README quick starts produced identical
 WebP bytes, and local-path installation into an isolated prefix reported
 version 0.1.0. For clean-build validation, a fresh local Git clone received the
 same Phase 8 changes as a temporary validation commit. With no target directory,
-`cargo build --release --locked --offline --bin webp-ssim-optimizer --example smoke`
+`cargo build --release --locked --offline --bin webptune --example smoke`
 rebuilt all dependencies from cached downloads; release smoke and README file/
 stdout quick starts passed, and Git status stayed clean before and after.
 The manifest, lockfile and Rust sources matched the working checkout. This

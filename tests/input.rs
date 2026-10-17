@@ -5,7 +5,7 @@ use std::process::Command;
 
 use image::{AnimationDecoder, ImageDecoder};
 use tempfile::tempdir;
-use webp_ssim_optimizer::input::{self, Pixels};
+use webptune::input::{self, Pixels};
 
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -246,7 +246,7 @@ fn cli_reports_prepared_dimensions_writes_webp_and_preserves_source() {
     fs::copy(fixture("rgba.png"), &input).unwrap();
     let original = fs::read(&input).unwrap();
     fs::write(&output, b"existing output").unwrap();
-    let result = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"))
+    let result = Command::new(env!("CARGO_BIN_EXE_webptune"))
         .arg("-i")
         .arg(&input)
         .arg("-o")
@@ -304,7 +304,7 @@ fn cli_ingestion_errors_leave_stdout_and_destination_untouched() {
     for (name, source, message) in cases {
         fs::write(&input, &source).unwrap();
         for output in [destination.as_path(), Path::new("-")] {
-            let result = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"))
+            let result = Command::new(env!("CARGO_BIN_EXE_webptune"))
                 .arg("-i")
                 .arg(&input)
                 .arg("-o")
@@ -322,7 +322,7 @@ fn cli_ingestion_errors_leave_stdout_and_destination_untouched() {
             assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
         }
         fs::write(&destination, b"existing output").unwrap();
-        let result = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"))
+        let result = Command::new(env!("CARGO_BIN_EXE_webptune"))
             .arg("-i")
             .arg(&input)
             .arg("-o")

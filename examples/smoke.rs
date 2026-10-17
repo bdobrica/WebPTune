@@ -8,7 +8,7 @@ use anyhow::{ensure, Context, Result};
 use fast_ssim2::{compute_ssimulacra2, PixelDescriptor, PixelSlice};
 use image::ImageFormat;
 use tempfile::tempdir;
-use webp_ssim_optimizer::input;
+use webptune::input;
 
 fn successful(output: &Output) -> Result<()> {
     ensure!(
@@ -29,7 +29,7 @@ fn main() -> Result<()> {
     successful(&version)?;
     ensure!(
         String::from_utf8_lossy(&version.stdout).trim()
-            == concat!("webp-ssim-optimizer ", env!("CARGO_PKG_VERSION")),
+            == concat!("webptune ", env!("CARGO_PKG_VERSION")),
         "unexpected CLI version"
     );
 
