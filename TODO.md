@@ -40,8 +40,8 @@ Validation: Rust 1.89.0 `cargo check --all-targets --locked`,
 and `cargo test --all-targets --locked` (nine unit tests, ten CLI integration
 tests, and five Phase 0 prototype tests on Linux).
 Phase 1 established argument/path validation and a pending-pipeline error without
-output. Phase 2 now connects the reusable header and processing limits to
-decoding/resizing; optimization and output remain pending.
+output. Phase 2 connects the reusable header and processing limits to
+decoding/resizing; phases 3–4 supply scoring and selection. Output remains pending.
 See [PLAN.md, section 13](PLAN.md#13-phase-1-cli-and-validation-decisions).
 
 ## Phase 2 — Decode, normalize and resize (M1)
@@ -62,8 +62,8 @@ Validation: Rust 1.89.0 `cargo check --all-targets --locked`,
 and `cargo test --all-targets --locked` (eleven unit tests, twenty-two integration
 tests and five Phase 0 prototype tests on Linux).
 
-Phase 2 connected reference preparation to the CLI; Phase 3 now evaluates trials
-before reporting that search and output remain pending. It creates no output
+Phase 2 connected reference preparation to the CLI; phases 3–4 now evaluate and
+select candidates before reporting that output remains pending. It creates no output
 and preserves any existing destination. Input tests cover supported formats, alpha/opaque layouts,
 rounded and tiny scales, premultiplied-alpha filtering, animation rejection,
 header limits, malformed data, grayscale/16-bit conversion and explicit EXIF
@@ -94,24 +94,38 @@ successfully encoded, decoded and scored trial bytes. Tests cover every integer
 lossy quality, lossless, alpha semantics, malformed/animated candidates,
 dimension/layout errors and non-finite scores. An independent decoder and the
 one-shot metric API verify trial scores for all supported formats, scales and
-tiny/transparent images. The CLI evaluates quality 75 and lossless as pipeline
-checks, then exits nonzero without output until phases 4–5 implement selection
-and writing. See [PLAN.md, section 15](PLAN.md#15-phase-3-metric-and-trial-evaluation).
+tiny/transparent images. Phase 3 exercised quality 75 and lossless as CLI pipeline
+checks; Phase 4 replaces these with threshold-based search and selection. Writing
+remains pending. See [PLAN.md, section 15](PLAN.md#15-phase-3-metric-and-trial-evaluation).
 
 ## Phase 4 — Search and selection (M3)
 
-- [ ] Define `Candidate`, feasibility (`score >= threshold`), size-first ordering and stable tie breaks.
-- [ ] Add tested-quality cache / deduplication.
-- [ ] Evaluate quality endpoints `0` and `100`.
-- [ ] Implement integer binary-search heuristic with an explicit evaluation budget.
-- [ ] Probe the boundary neighborhood (suggested ±4 qualities) and retain smallest feasible tested bytes.
-- [ ] Ensure no monotonicity assumption is treated as a correctness guarantee.
-- [ ] Always evaluate a lossless candidate, decode and score it.
-- [ ] Select smallest **tested feasible** lossy/lossless output; document heuristic scope.
-- [ ] Return explicit failure when no candidate satisfies threshold.
-- [ ] Unit test score exactly equal threshold, lossless smaller, no feasible quality, nonmonotonic synthetic score curve, duplicate quality and tie breaking.
+- [x] Define `Candidate`, feasibility (`score >= threshold`), size-first ordering and stable tie breaks.
+- [x] Add tested-quality cache / deduplication.
+- [x] Evaluate quality endpoints `0` and `100`.
+- [x] Implement integer binary-search heuristic with an explicit evaluation budget.
+- [x] Probe the boundary neighborhood (suggested ±4 qualities) and retain smallest feasible tested bytes.
+- [x] Ensure no monotonicity assumption is treated as a correctness guarantee.
+- [x] Always evaluate a lossless candidate, decode and score it.
+- [x] Select smallest **tested feasible** lossy/lossless output; document heuristic scope.
+- [x] Return explicit failure when no candidate satisfies threshold.
+- [x] Unit test score exactly equal threshold, lossless smaller, no feasible quality, nonmonotonic synthetic score curve, duplicate quality and tie breaking.
 
 **Gate:** algorithm chooses smallest feasible *evaluated* candidate, not simply minimum quality.
+
+Validation: Rust 1.89.0 `cargo check --all-targets --locked`,
+`cargo fmt --all -- --check`, `cargo clippy --all-targets --locked -- -D warnings`,
+and `cargo test --all-targets --locked` (twenty-four unit tests, thirty-two
+integration tests and five Phase 0 prototype tests on Linux).
+
+The default budget permits up to 18 distinct lossy trials plus measured lossless.
+Only the best feasible bytes and numeric trial summaries are retained. Real-image
+tests independently score selected bytes and compare them with every tested
+feasible trial. Synthetic tests cover all 101 monotonic boundary positions,
+nonmonotonic scores/sizes, missed untested qualities, exact thresholds, ties,
+deduplication, budget limits and evaluator failures. The CLI now enforces the
+threshold during selection, then exits nonzero without writing until Phase 5.
+See [PLAN.md, section 16](PLAN.md#16-phase-4-search-and-selection).
 
 ## Phase 5 — Output and reporting (M4)
 

@@ -47,6 +47,16 @@ impl Trial {
     pub fn into_bytes(self) -> Vec<u8> {
         self.bytes
     }
+
+    /// Synthetic measured outcomes for search unit tests only.
+    #[cfg(test)]
+    pub(crate) fn synthetic(mode: Mode, score: f64, size: usize) -> Self {
+        Self {
+            mode,
+            score,
+            bytes: vec![0; size],
+        }
+    }
 }
 
 /// Borrows immutable processed pixels and constructs the metric exactly once.

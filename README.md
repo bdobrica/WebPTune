@@ -1,6 +1,6 @@
 # WebP SSIM Optimizer
 
-**Status: Phases 0–3 implemented (CLI validation, image preparation and in-memory WebP candidate scoring); search and output are still pending.** Implementation is tracked in [TODO.md](TODO.md) and designed in [PLAN.md](PLAN.md). The flags below prepare and evaluate a reference image; conversion examples will produce images after phases 4–5 are implemented.
+**Status: Phases 0–4 implemented (CLI validation, image preparation, candidate scoring and bounded selection); output writing is still pending.** Implementation is tracked in [TODO.md](TODO.md) and designed in [PLAN.md](PLAN.md). The flags below prepare a reference and select a candidate in memory; conversion examples will produce images after Phase 5 is implemented.
 
 To validate the current prototype (it generates synthetic images in memory):
 
@@ -10,7 +10,7 @@ cargo run --locked --example api_spike
 cargo test --all-targets --locked
 ```
 
-`rust-toolchain.toml` selects Rust 1.89.0 with rustfmt and Clippy. A C compiler and archiver are required: `libwebp-sys` builds its bundled libwebp sources. `cargo run -- --help` and `--version` work. Input and output flags are required; supported still images are decoded, optionally resized, and normalized. The command evaluates lossy quality 75 and lossless in memory using one cached metric reference, then reports prepared dimensions and RGB8/RGBA8 layout on stderr and exits nonzero without writing output. `--verbose` prints each trial's size and decoded score. These two pipeline checks do not select an output or enforce `--threshold`; search and writing remain pending. See [Phase 2 decisions](PLAN.md#14-phase-2-image-preparation-decisions) for input behavior and [Phase 3 decisions](PLAN.md#15-phase-3-metric-and-trial-evaluation) for evaluation details.
+`rust-toolchain.toml` selects Rust 1.89.0 with rustfmt and Clippy. A C compiler and archiver are required: `libwebp-sys` builds its bundled libwebp sources. `cargo run -- --help` and `--version` work. Input and output flags are required; supported still images are decoded, optionally resized, and normalized. The command searches lossy qualities and measures lossless using one cached metric reference, then selects the smallest tested candidate meeting `--threshold`. It reports the selection and prepared dimensions on stderr and exits nonzero without writing output until Phase 5. `--verbose` prints each trial's size and decoded score. See [image preparation](PLAN.md#14-phase-2-image-preparation-decisions), [evaluation](PLAN.md#15-phase-3-metric-and-trial-evaluation) and [search decisions](PLAN.md#16-phase-4-search-and-selection).
 
 Convert a supported still image into a compact WebP file while enforcing a minimum **SSIMULACRA2** perceptual similarity score. Rather than choosing a fixed WebP encoder quality in advance, the tool encodes candidates in memory, decodes and scores them, and writes the smallest **tested** output that meets your requested quality floor.
 
@@ -105,6 +105,14 @@ The native SSIMULACRA2 scale is **not a percentage** and may yield negative scor
 
 The optimization may choose lossless because it yields a smaller file (especially for low-complexity graphics) or because no tested lossy setting meets the requested quality.
 
+The current search tests lossy quality 0 and 100, runs up to seven integer binary
+steps, and probes ±4 around the estimated boundary. Duplicate qualities are
+cached. The default limit is 18 lossy evaluations plus one measured lossless
+evaluation. Selection compares actual byte counts; equal sizes prefer lossy,
+then lower quality. Only the best candidate's bytes and numeric trial summaries
+are retained. An error means no **tested** candidate met the threshold, rather
+than proving all untested qualities infeasible.
+
 ## Behavior and limitations
 
 - **Not globally optimal:** WebP quality, SSIM scores, and output byte sizes are not strictly monotonic. The bounded binary-search heuristic plus nearby probes finds a useful candidate, but can miss a smaller feasible one.
@@ -126,7 +134,7 @@ malformed images, encoding/decoding failures, impossible thresholds and output
 errors will exit nonzero with details on stderr.
 
 Currently, help/version exit `0`, invalid arguments exit `2`, and path/input errors or
-the pending-search/output diagnostic exit `1`. Validation and candidate evaluation preserve the
+the pending-output diagnostic exit `1`. Validation, candidate evaluation and selection preserve the
 input and any existing destination, including rejecting canonical-path, symlink
 and hard-link collisions. Missing output paths require an existing parent
 directory. Input `-` is unsupported; output `-` selects stdout.
@@ -146,8 +154,11 @@ conversion, transparent edges, animation rejection, corrupt/oversized inputs,
 EXIF behavior, source preservation and empty stdout on failure. Candidate tests
 cover every integer lossy quality, lossless, alpha semantics, dimension/layout
 validation and decode errors. Trial scores are verified through an independent
-decode and one-shot metric path. The suite also retains the Phase 0 API tests.
-Search and output remain for phases 4–5.
+decode and one-shot metric path. Search tests cover nonmonotonic scores/sizes,
+exact thresholds, lossless comparison, deduplication, budgets, ties and errors;
+real-image selections are checked against every tested feasible candidate and
+independently scored. The suite also retains the Phase 0 API tests. Output
+writing remains for Phase 5.
 
 The synthetic fixtures are committed under `tests/fixtures`, with provenance in
 [their README](tests/fixtures/README.md). Regenerate them with:

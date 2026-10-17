@@ -8,6 +8,7 @@ use tempfile::tempdir;
 use webp_ssim_optimizer::encoder::{Mode, TrialEvaluator};
 use webp_ssim_optimizer::input::{self, Pixels};
 use webp_ssim_optimizer::metric::MetricReference;
+use webp_ssim_optimizer::search::{self, SearchOptions};
 
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -288,6 +289,7 @@ fn evaluator_keeps_source_and_files_unchanged_and_cli_reports_verbose_trials() {
     for mode in [Mode::Lossy { quality: 75 }, Mode::Lossless] {
         evaluator.evaluate(mode).unwrap();
     }
+    let selection = search::search(&evaluator, 100.0).unwrap();
     assert_eq!(prepared.pixels().as_bytes(), before);
     assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 2);
     for destination in [output.as_os_str(), std::ffi::OsStr::new("-")] {
@@ -303,16 +305,126 @@ fn evaluator_keeps_source_and_files_unchanged_and_cli_reports_verbose_trials() {
         assert!(result.stdout.is_empty());
         let stderr = String::from_utf8(result.stderr).unwrap();
         for expected in [
-            "Lossy { quality: 75 }",
+            "Lossy { quality: 0 }",
+            "Lossy { quality: 100 }",
             "Lossless",
             "decoded SSIMULACRA2 score",
-            "2 measured trials",
-            "Phases 4–5",
+            "Candidate selection passed",
+            ">= threshold 100",
+            "Phase 5",
         ] {
             assert!(stderr.contains(expected), "{stderr}");
+        }
+        assert!(stderr.contains(&format!("{} measured trials", selection.trials().len())));
+        assert_eq!(
+            stderr
+                .lines()
+                .filter(|line| line.starts_with("Trial "))
+                .count(),
+            selection.trials().len()
+        );
+        for trial in selection.trials() {
+            assert!(stderr.contains(&format!(
+                "Trial {:?}: {} bytes, decoded SSIMULACRA2 score {:.6}",
+                trial.mode, trial.size, trial.score
+            )));
         }
     }
     assert_eq!(fs::read(&input).unwrap(), original);
     assert_eq!(fs::read(&output).unwrap(), b"existing destination");
     assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 2);
+}
+
+#[test]
+fn search_returns_the_smallest_tested_feasible_bytes_with_independent_score() {
+    for name in [
+        "rgb.png",
+        "rgba.png",
+        "tiny-rgb.png",
+        "tiny-rgba.png",
+        "transparent.png",
+    ] {
+        for scale in [1.0, 0.5] {
+            let prepared = input::load(&fixture(name), scale).unwrap();
+            let before = prepared.pixels().as_bytes().to_vec();
+            let evaluator = TrialEvaluator::new(prepared.pixels()).unwrap();
+            for threshold in [0.0, 80.0, 90.0, 100.0] {
+                let result = search::search(&evaluator, threshold).unwrap();
+                let selected = result.candidate();
+                let score = independent_score(prepared.pixels(), selected.bytes());
+                assert_eq!(selected.score(), score, "{name}, {scale}, {threshold}");
+                assert!(score >= threshold);
+                let mut tested = [false; 101];
+                for trial in result.trials() {
+                    if let Mode::Lossy { quality } = trial.mode {
+                        assert!(!tested[usize::from(quality)]);
+                        tested[usize::from(quality)] = true;
+                    }
+                    // Verify the summaries against real re-evaluation, rather
+                    // than trusting the selection routine's accounting alone.
+                    let actual = evaluator.evaluate(trial.mode).unwrap();
+                    assert_eq!(trial.size, actual.size());
+                    assert_eq!(trial.score, actual.score());
+                    if actual.score() >= threshold {
+                        assert!(selected.size() <= actual.size());
+                    }
+                }
+                assert!(tested[0] && tested[100]);
+                assert!(result.trials().len() <= 19);
+                assert_eq!(result.trials().last().unwrap().mode, Mode::Lossless);
+                // Check tie breaks separately from the search comparator.
+                let best = result
+                    .trials()
+                    .iter()
+                    .filter(|trial| trial.score >= threshold)
+                    .min_by_key(|trial| {
+                        let rank = match trial.mode {
+                            Mode::Lossy { quality } => quality,
+                            Mode::Lossless => 101,
+                        };
+                        (trial.size, rank)
+                    })
+                    .unwrap();
+                assert_eq!(selected.mode(), best.mode);
+                assert_eq!(selected.score(), best.score);
+                assert_eq!(
+                    selected.bytes(),
+                    evaluator.evaluate(best.mode).unwrap().bytes()
+                );
+            }
+            assert_eq!(prepared.pixels().as_bytes(), before);
+        }
+    }
+}
+
+#[test]
+fn minimum_search_budget_still_measures_both_endpoints_and_lossless() {
+    for name in ["rgb.png", "rgba.png"] {
+        let prepared = input::load(&fixture(name), 1.0).unwrap();
+        let evaluator = TrialEvaluator::new(prepared.pixels()).unwrap();
+        let result = search::search_with_options(
+            &evaluator,
+            100.0,
+            SearchOptions {
+                max_lossy_trials: 2,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            result
+                .trials()
+                .iter()
+                .map(|trial| trial.mode)
+                .collect::<Vec<_>>(),
+            [
+                Mode::Lossy { quality: 0 },
+                Mode::Lossy { quality: 100 },
+                Mode::Lossless
+            ]
+        );
+        assert_eq!(
+            independent_score(prepared.pixels(), result.candidate().bytes()),
+            100.0
+        );
+    }
 }

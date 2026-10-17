@@ -1,6 +1,6 @@
 # Implementation Plan — WebP SSIM Optimizer
 
-**Status:** Phases 0–3 implemented; phases 4–8 planned · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
+**Status:** Phases 0–4 implemented; phases 5–8 planned · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
 
 ## 1. Purpose and scope
 
@@ -520,11 +520,10 @@ is permitted, with its actual score retained.
 
 `Trial` exposes mode, measured score, size (derived from bytes) and owned encoded
 bytes. It makes no threshold or ordering decision. The evaluator writes no files
-and retains no collection of past trials; Phase 4 can retain only the best bytes
-and summaries. The CLI currently evaluates lossy quality 75 and lossless as two
-pipeline checks, printing trial details only with `--verbose`, then reports the
-processed dimensions and exits nonzero with empty stdout. These checks do not
-select an output or enforce `--threshold`; search and output remain phases 4–5.
+and retains no collection of past trials. Phase 3 exercised lossy quality 75 and
+lossless as two CLI pipeline checks. Phase 4 replaces those checks with bounded
+search and selection, retaining only the best bytes and numeric summaries.
+Output writing remains Phase 5.
 
 Integration tests independently decode trial bytes with the image convenience
 API, construct separate pixel views and call the one-shot
@@ -537,3 +536,58 @@ RGB and alpha changes lower the score. Tests also cover invalid quality/layout,
 dimension mismatch, non-finite scores, empty/corrupt/truncated/animated candidate
 bytes, source/destination preservation and CLI stdout hygiene. No new
 dependencies are required.
+
+## 16. Phase 4 search and selection
+
+`search::Candidate` reuses the evaluator's measured `Trial` type. Its private
+fields ensure public callers cannot manufacture unmeasured candidate bytes.
+`TrialSummary` records mode, measured score and actual byte count without keeping
+the encoded buffer. Feasibility is exactly `score >= threshold`, with no epsilon.
+Among feasible trials the ordering is byte count first, then lossy before
+lossless, then lower integer quality; a higher score does not override that
+ordering. `SearchResult` owns the best candidate and summaries in evaluation
+order. Inferior bytes are discarded immediately.
+
+`search::search` uses one existing `TrialEvaluator` and its cached metric
+reference. It evaluates lossy 0 and 100 first, then runs at most seven integer
+binary-search steps within 1–99 when quality 0 fails. Quality 100 failing does
+not skip this search: lower qualities can still pass on a nonmonotonic curve.
+The lowest passing binary trial anchors a ±4 neighborhood; if none passed, the
+anchor is 100. If quality 0 passed, the anchor is 0. Neighborhoods are clipped
+to 0–100. A fixed 101-entry cache prevents duplicate encoding or scoring,
+including when endpoints or binary trials overlap the probes.
+
+`SearchOptions::max_lossy_trials` defaults to 18: two endpoints, up to seven
+binary steps and up to nine neighborhood points before deduplication. The
+library's `search_with_options` accepts budgets 2–101; smaller budgets can
+truncate binary steps or probes. A larger budget does not turn the heuristic
+into exhaustive search. Lossless receives a separate final evaluation even if
+the lossy budget is exhausted or a lossy trial passed. It is decoded and scored
+by the same evaluator and competes using the same ordering, never assumed to
+score 100. Default total evaluations are at most 19.
+
+Every feasible trial competes for selection regardless of its position in the
+search. Binary decisions only choose where to look next; they do not prove
+anything about untested qualities or sizes. A test explicitly demonstrates a
+feasible quality outside the probes being missed. If no tested trial passes,
+the typed `ThresholdUnachievable` error includes threshold, best measured score
+and trial count, and states that untested feasible qualities may exist. Invalid
+thresholds or budgets fail before evaluation. Encoder/decoder/metric errors
+abort with mode context and their original cause, rather than becoming failed
+quality scores; an earlier evaluation error also aborts before later trials.
+
+The CLI now applies `--threshold` during search, prints numeric trial history
+with `--verbose`, and reports the selected mode, size, measured score, prepared
+dimensions and trial count on stderr in a pending-output error. It still exits
+nonzero and writes nothing until Phase 5 implements output. Input and existing
+destinations are preserved for both file and stdout targets.
+
+Unit tests cover exact threshold equality, negative scores, lossless being
+smaller, no feasible candidate, nonmonotonic curves, all 101 monotonic boundary
+positions, clipped neighborhoods, deduplication, budgets 2–101, deterministic
+ties, invalid options and evaluator errors. Real RGB/RGBA, tiny and transparent
+fixtures at scales 1 and 0.5 and thresholds 0/80/90/100 verify selected bytes
+through independent decoding and the one-shot metric. Re-evaluation verifies
+every numeric summary; selection is compared against every tested feasible
+trial, including ties. CLI tests verify verbose history, threshold application,
+empty stdout and unchanged source/destination files. No dependencies were added.

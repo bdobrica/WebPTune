@@ -110,7 +110,7 @@ fn valid_arguments_reach_pending_pipeline_without_output() {
     ] {
         assert_failure(
             &fixture.run(&fixture.output, &extra),
-            "Candidate evaluation passed",
+            "Candidate selection passed",
         );
         assert!(!fixture.output.exists());
     }
@@ -122,12 +122,12 @@ fn valid_arguments_reach_pending_pipeline_without_output() {
         .arg(&fixture.output)
         .output()
         .unwrap();
-    assert_failure(&output, "Candidate evaluation passed");
+    assert_failure(&output, "Candidate selection passed");
     assert!(!String::from_utf8_lossy(&output.stderr).contains("Trial "));
     fs::write(&fixture.output, DESTINATION).unwrap();
     assert_failure(
         &fixture.run(&fixture.output, &[]),
-        "Candidate evaluation passed",
+        "Candidate selection passed",
     );
     assert_eq!(fs::read(&fixture.output).unwrap(), DESTINATION);
     fixture.source_unchanged();
@@ -259,7 +259,7 @@ fn stdout_target_has_no_text_payload_on_failure() {
     let fixture = Fixture::new();
     assert_failure(
         &fixture.run(Path::new("-"), &[]),
-        "Candidate evaluation passed",
+        "Candidate selection passed",
     );
     assert_failure(&fixture.run(Path::new("-"), &["-s", "0"]), "scale must");
     assert!(!fixture.dir.path().join("-").exists());
@@ -272,7 +272,7 @@ fn stdout_target_has_no_text_payload_on_failure() {
         .args(["-i", "./-", "-o", "./destination.webp"])
         .output()
         .unwrap();
-    assert_failure(&output, "Candidate evaluation passed");
+    assert_failure(&output, "Candidate selection passed");
     assert_eq!(fs::read(fixture.dir.path().join("-")).unwrap(), SOURCE);
     assert!(!fixture.output.exists());
 }
