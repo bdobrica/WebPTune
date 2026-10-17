@@ -233,7 +233,7 @@ failure test. This closes the platform checkbox. See
 - [x] Add `LICENSE`, repository description, and release version metadata.
 - [x] Validate building with `--locked` from a clean checkout.
 - [x] Review dependencies and native libwebp build requirements for release targets.
-- [ ] Tag v0.1.0 after all acceptance gates pass.
+- [x] Tag v0.1.0 after all acceptance gates pass.
 
 **Gate:** new users can build and successfully run both `-o file.webp` and `-o -` from README instructions.
 
@@ -263,9 +263,13 @@ The source manifest, lockfile and Rust sources matched the working checkout.
 
 After publication, [hosted run 39074512319](https://github.com/bdobrica/WebPTune/actions/runs/39074512319)
 passed the entire native Linux/macOS/Windows matrix on commit `16cfe64`. This
-closes Phase 7's platform check and the native CI acceptance gate. The v0.1.0
-tag remains open; rerun the matrix on the final proposed release commit before
-tagging. See [PLAN.md, section 24](PLAN.md#24-hosted-platform-validation).
+closes Phase 7's platform check and the native CI acceptance gate. The final
+release commit `faf6ae1` also passed the full matrix in
+[run 39074733215](https://github.com/bdobrica/WebPTune/actions/runs/39074733215).
+The annotated [v0.1.0 tag](https://github.com/bdobrica/WebPTune/tree/v0.1.0)
+points to that commit after a fresh locked/offline release build, both README
+quick starts and the independent release smoke checker passed in a clean
+checkout. See [PLAN.md, section 25](PLAN.md#25-v010-release-tag).
 
 ## Phase 9 — Deferred enhancements (NOT required for MVP)
 
@@ -332,8 +336,8 @@ both modes. Subsequent hosted platform validation is recorded in
 ## Release acceptance checklist
 
 Checked items below are validated locally and by the native Linux/macOS/Windows
-[CI run on commit `16cfe64`](https://github.com/bdobrica/WebPTune/actions/runs/39074512319). Revalidate the
-final proposed release commit before tagging. Failure coverage follows the
+[CI run on tagged commit `faf6ae1`](https://github.com/bdobrica/WebPTune/actions/runs/39074733215).
+Failure coverage follows the
 documented limits for shell redirection, partial stdout, filesystem races and
 abrupt termination.
 
@@ -347,4 +351,4 @@ abrupt termination.
 - [x] Raw WebP on stdout has no text contamination.
 - [x] All failure paths return nonzero, preserve input and avoid partial final files.
 - [x] Limitations, non-optimality guarantee and scope are clearly documented.
-- [x] Native Linux/macOS/Windows CI jobs pass on the proposed release commit (`16cfe64`; revalidate after changes).
+- [x] Native Linux/macOS/Windows CI jobs pass on the v0.1.0 release commit (`faf6ae1`).

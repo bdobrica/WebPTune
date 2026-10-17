@@ -1,12 +1,17 @@
-# Preparing v0.1.0
+# Releasing webptune
 
-Release status: **native Linux/macOS/Windows CI passed; tag pending**.
-[Hosted run 39074512319](https://github.com/bdobrica/WebPTune/actions/runs/39074512319) validated commit
-`16cfe644518dd4b73181e1ae0e812e88a568ea16` on all three platforms, including
+Release status: **annotated v0.1.0 tag published** at commit
+`faf6ae12c8ccb8efcf99ecbacfff512a23404145`.
+[Hosted run 39074733215](https://github.com/bdobrica/WebPTune/actions/runs/39074733215) validated that
+commit on all three platforms, including
 release builds, file replacement and independently scored release smoke checks.
-The package version is 0.1.0, but no release tag has been created.
+The [v0.1.0 source tag](https://github.com/bdobrica/WebPTune/tree/v0.1.0)
+also passed a fresh locked/offline release build, both README quick starts
+with byte-identical file/stdout output, and the independent release smoke
+checker in a clean checkout. The tag identifies the validated commit; the
+documentation commit recording completion follows it on `main`.
 `publish = false` remains intentional: this is a source-build CLI, not a
-crates.io publication workflow. Revalidate the exact proposed release commit
+crates.io publication workflow. For future tags, revalidate the exact proposed release commit
 when it changes; an earlier passing run does not cover later code changes.
 
 ## Gates before tagging

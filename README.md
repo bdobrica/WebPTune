@@ -5,11 +5,12 @@ Convert JPEG, PNG, WebP or BMP still images to WebP with a minimum measured
 writes the smallest **tested** output meeting the threshold. It can resize first
 and preserves transparency.
 
-**Status:** v0.1.0 is in release preparation. The native Linux, macOS and
-Windows [CI matrix passed](https://github.com/bdobrica/WebPTune/actions/runs/39074512319) on commit `16cfe64`,
-including tests, release builds and release smoke checks. There is no release
-tag yet. Progress is tracked in [TODO.md](TODO.md); release gates and
-commands are in [RELEASING.md](RELEASING.md).
+**Status:** [v0.1.0 is tagged](https://github.com/bdobrica/WebPTune/tree/v0.1.0)
+at commit `faf6ae1`. The native Linux, macOS and Windows
+[CI matrix passed](https://github.com/bdobrica/WebPTune/actions/runs/39074733215)
+on that commit, including tests, release builds and release smoke checks.
+Install from source using the instructions below. Progress is tracked in
+[TODO.md](TODO.md); release validation is recorded in [RELEASING.md](RELEASING.md).
 
 ## Quick start
 

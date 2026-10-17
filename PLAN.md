@@ -1,6 +1,6 @@
 # Implementation Plan — webptune
 
-**Status:** Phases 0–6 implemented; Phase 7 performance/robustness and native Linux/macOS/Windows checks validated; Phase 8 documentation/CI validated, tag pending; Phase 9 maximum-dimension resizing, exhaustive search, size policies and quiet mode implemented · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
+**Status:** Phases 0–8 complete; v0.1.0 tagged after native Linux/macOS/Windows validation; Phase 9 maximum-dimension resizing, exhaustive search, size policies and quiet mode implemented · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
 
 ## 1. Purpose and scope
 
@@ -823,8 +823,8 @@ the full set of third-party license notices; this phase prepares source builds.
 [RELEASING.md](RELEASING.md) defines clean-checkout, hosted-matrix and output
 acceptance gates before tagging. Local Linux checks do not validate macOS or
 Windows. Following repository publication, the native hosted matrix passed
-(section 24), closing the Phase 7 platform task. The v0.1.0 tag remains pending;
-revalidate the final proposed release commit before tagging. The CI configuration
+(section 24), closing the Phase 7 platform task. The v0.1.0 tag was subsequently
+created on the verified release commit (section 25). The CI configuration
 also passed actionlint 1.7.12.
 
 
@@ -839,7 +839,7 @@ rebuilt all dependencies from cached downloads; release smoke and README file/
 stdout quick starts passed, and Git status stayed clean before and after.
 The manifest, lockfile and Rust sources matched the working checkout. This
 closes the local documentation/clean-build gate. Subsequent hosted CI passed
-(section 24); the release tag remains pending.
+(section 24), and the release tag is recorded in section 25.
 
 ## 21. Phase 9 — Maximum output dimensions
 
@@ -1030,5 +1030,25 @@ and cleanup.
 This closes Phase 7's platform checkbox and the native CI release acceptance
 gate for that commit. It validates the tested native runner environments and
 filesystems; it does not add Windows ACL-denial coverage or certify other OS/CPU
-combinations. The v0.1.0 tag remains pending, and the exact proposed release
-commit must pass the matrix before tagging. No tag or release was created.
+combinations. Final release-commit validation and tagging are recorded below.
+
+## 25. v0.1.0 release tag
+
+The annotated [v0.1.0 tag](https://github.com/bdobrica/WebPTune/tree/v0.1.0)
+identifies commit `faf6ae12c8ccb8efcf99ecbacfff512a23404145`.
+[Run 39074733215](https://github.com/bdobrica/WebPTune/actions/runs/39074733215)
+passed the full native Linux/macOS/Windows workflow on that exact commit,
+including formatting, Clippy, all-target tests, release builds, independent
+release smoke checks and clean tracked files.
+
+Before tagging, a fresh detached checkout of that commit with an empty target
+directory passed `cargo build --release --locked --offline --bin webptune --example smoke`.
+Both README file/stdout quick starts produced identical WebP
+bytes, the independent RGB/RGBA release smoke checker passed, and Git status
+remained clean. Only downloaded dependencies were reused.
+
+The annotated tag was created from that clean checkout and pushed to GitHub.
+The documentation commit recording completion follows the tagged commit on
+`main`.
+This closes Phase 8 and the MVP checklist. Distribution remains from source;
+no crates.io package, binary archives or GitHub Release were published.
