@@ -5,10 +5,10 @@ Convert JPEG, PNG, WebP or BMP still images to WebP with a minimum measured
 writes the smallest **tested** output meeting the threshold. It can resize first
 and preserves transparency.
 
-**Status:** v0.1.0 is in release preparation. Linux validation passes; the
-[CI matrix](.github/workflows/ci.yml) is configured for Linux, macOS and Windows,
-but hosted runs and macOS/Windows validation are still pending. There is no
-release tag yet. Progress is tracked in [TODO.md](TODO.md); release gates and
+**Status:** v0.1.0 is in release preparation. The native Linux, macOS and
+Windows [CI matrix passed](https://github.com/bdobrica/WebPTune/actions/runs/39074512319) on commit `16cfe64`,
+including tests, release builds and release smoke checks. There is no release
+tag yet. Progress is tracked in [TODO.md](TODO.md); release gates and
 commands are in [RELEASING.md](RELEASING.md).
 
 ## Quick start
@@ -82,7 +82,7 @@ webptune --version
 ```
 
 The package is not published to crates.io (`publish = false`); installation is
-from source. No remote URL is configured in this checkout yet. The commands in
+from source in the [GitHub repository](https://github.com/bdobrica/WebPTune). The commands in
 [Quick start](#quick-start) need no PATH change and use the included fixtures.
 
 For a machine-specific optimized build, optionally use:
@@ -244,7 +244,7 @@ errors abort either mode, without returning a partial winner.
 - **Image metadata:** EXIF, XMP and ICC profiles are not promised to carry over into the WebP output.
 - **Resizing:** `--scale` uses `max(1, round(dimension * scale))` on each axis. Dimension bounds use the smaller of 1, maximum width/source width and maximum height/source height (omitting unspecified bounds), with the same nearest-pixel rounding and one-pixel minimum. Both axes share one ratio; whole-pixel rounding can slightly change the exact aspect ratio, especially for tiny images. Output stays within every supplied bound. Lanczos3 runs once when dimensions change and is bypassed otherwise. Alpha is premultiplied during filtering and returned as straight alpha; hidden RGB does not tint visible edges. Fully opaque processed images use RGB8; others use RGBA8.
 - **Source safety and overwrite policy:** canonical, symlink and hard-link aliases of the input are refused, with another check immediately before replacement. Existing destinations are replaced via a same-directory temporary file and rename; failures before replacement preserve the old destination and clean up staging files. An unrelated destination symlink is replaced as a directory entry, leaving its referent untouched. Dangling destination symlinks are rejected. Concurrent filesystem changes after validation cannot be fully prevented.
-- **File permissions and durability:** the replacement is a new temporary file, so existing destination permissions/ownership/metadata are not preserved (on Unix, new outputs normally have mode `0600`). Contents are synced before replacement, but the containing directory is not synced; power-loss durability is not guaranteed. Abrupt process termination may leave a temporary file. Windows/macOS replacement behavior still needs platform execution; the Phase 7 platform check remains open.
+- **File permissions and durability:** the replacement is a new temporary file, so existing destination permissions/ownership/metadata are not preserved (on Unix, new outputs normally have mode `0600`). Contents are synced before replacement, but the containing directory is not synced; power-loss durability is not guaranteed. Abrupt process termination may leave a temporary file. Native Linux/macOS/Windows replacement tests and release smoke checks [passed in hosted CI](https://github.com/bdobrica/WebPTune/actions/runs/39074512319); this validates the tested runner filesystems.
 - **Output failures:** write, flush, sync and rename errors return nonzero. Broken stdout pipes fail too; a partial stdout payload cannot be rolled back. Shell redirection creates/truncates its target before the program runs, so file preservation applies to `-o path`, not `-o - > path`. Keep the redirection target separate from the source.
 - **Safety limits:** headers are checked before pixel decoding: 100 million source pixels, 16,383 pixels per output axis after scaling, and a 1 GiB estimated working-memory budget including metric padding and resize buffers. This conservative estimate permits 2000×2000 at full scale, while 2048×2048 requires downscaling. Decoder limits are configured, but they are best effort. Headers/metadata can allocate earlier (the JPEG decoder buffers compressed input), and the estimate is not a measured peak-memory guarantee.
 - **Corrupt input:** header/pixel decoder errors propagate as failures. Detection follows the underlying decoders; it is not an exhaustive container-integrity check, and permissive decoders can accept recoverable damage or trailing data.
@@ -277,7 +277,8 @@ scaled dimensions, alpha and source preservation.
 [CI](.github/workflows/ci.yml) runs the commands above on push, pull request and
 manual dispatch on all three target platforms. Each job uses a fresh checkout
 and the repository toolchain, including native replacement tests. It validates
-builds without publishing packages, tags or binaries. Hosted execution is pending.
+builds without publishing packages, tags or binaries. The full matrix
+[passed on commit `16cfe64`](https://github.com/bdobrica/WebPTune/actions/runs/39074512319).
 
 The suite covers argument and allocation limits, CLI process behavior, all four
 input formats, rounded/tiny resizing, width/height bounds and option conflicts,

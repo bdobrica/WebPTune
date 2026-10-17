@@ -202,7 +202,7 @@ for coverage boundaries; cross-platform execution remains Phase 7 work.
 - [x] Compare `cargo build --release` with `RUSTFLAGS="-C target-cpu=native" cargo build --release` on local hardware.
 - [x] Assess whether cached metric reference meaningfully improves run time.
 - [x] Run `cargo fmt`, `cargo clippy -D warnings`, all unit/integration tests.
-- [ ] Test Linux, macOS and Windows, including file replacement behavior.
+- [x] Test Linux, macOS and Windows, including file replacement behavior.
 
 **Gate:** document at least one representative benchmark run and all known limits.
 
@@ -218,10 +218,12 @@ estimate/resize guards are retained; this is not a hard process memory cap.
 Validation: Rust 1.89.0 format, Clippy (`-D warnings`), all-target check, all
 76 tests and both release builds passed with locked/offline dependencies on Linux.
 Timed/ordinary evaluator equivalence and preserving other hard links to an old
-destination are tested. A Windows-specific sharing/rename failure test is ready
-but unexecuted. No macOS runner or Windows Rust/C toolchain is available here;
-the platform checkbox deliberately remains open until real runs pass, including
-replacement behavior. See [PLAN.md, section 19](PLAN.md#19-phase-7-performance-and-robustness).
+destination are tested. Subsequent [hosted run 39074512319](https://github.com/bdobrica/WebPTune/actions/runs/39074512319)
+passed on commit `16cfe64` for Ubuntu 24.04 x86_64, macOS 15 Apple Silicon and
+Windows 2022 MSVC. All three ran the full workflow, including native replacement
+tests and release smoke checks; Windows also passed its held-file sharing/rename
+failure test. This closes the platform checkbox. See
+[PLAN.md, section 24](PLAN.md#24-hosted-platform-validation) for hosted evidence.
 
 ## Phase 8 — Documentation, CI and release (M5)
 
@@ -259,10 +261,11 @@ target directory; smoke and quick starts passed there too, with clean Git status
 before and after. Cargo reused only downloaded sources, not compiled artifacts.
 The source manifest, lockfile and Rust sources matched the working checkout.
 
-Hosted execution remains pending: this checkout has no Git remote and there is
-no local macOS/Windows Rust/C toolchain. Workflow configuration is validated with
-`actionlint`; it does not count as passing hosted CI. Phase 7's platform check
-and the v0.1.0 tag remain open until actual native runs pass.
+After publication, [hosted run 39074512319](https://github.com/bdobrica/WebPTune/actions/runs/39074512319)
+passed the entire native Linux/macOS/Windows matrix on commit `16cfe64`. This
+closes Phase 7's platform check and the native CI acceptance gate. The v0.1.0
+tag remains open; rerun the matrix on the final proposed release commit before
+tagging. See [PLAN.md, section 24](PLAN.md#24-hosted-platform-validation).
 
 ## Phase 9 — Deferred enhancements (NOT required for MVP)
 
@@ -287,7 +290,8 @@ all 84 tests, locked/offline release build and independent release smoke checks
 passed. The release binary also fitted the RGBA fixture from 17×11 to 8×5
 within 9×5 bounds at threshold 100, with identical file/stdout bytes. The new
 tests include 56 bounded CLI conversions, independently decoded and scored at
-thresholds 90/100. Hosted/native macOS and Windows validation remains pending.
+thresholds 90/100. Subsequent hosted platform validation is recorded in
+[PLAN.md, section 24](PLAN.md#24-hosted-platform-validation).
 
 Exhaustive search is available through `--search exhaustive`; `heuristic` remains
 the default. It measures all 101 integer lossy qualities and lossless, then
@@ -303,7 +307,8 @@ passed. A full-set oracle independently scores every candidate for RGB, RGBA,
 tiny and transparent inputs; exhaustive selections match at thresholds 0/80/100.
 Twelve additional CLI conversions check file/stdout equality, dimensions/alpha,
 102 verbose trials, unchanged sources and cleanup. Release exhaustive file and
-stdout checks also passed. Native hosted macOS/Windows validation remains pending.
+stdout checks also passed. Subsequent hosted platform validation is recorded in
+[PLAN.md, section 24](PLAN.md#24-hosted-platform-validation).
 
 Size policies are available through `--skip-if-larger` and `--max-bytes BYTES`,
 with `-q`/`--quiet` implementing this item's reporting alternative; JSON reports
@@ -321,13 +326,16 @@ passed. Tests cover cap and skip boundaries, both search modes and output
 routes, independently scored RGB/resized RGBA, destination/source preservation,
 cleanup and quiet behavior with visible failures. Release checks confirmed an
 exact 52-byte cap, a 70-to-304-byte recompression skip and equal-size writes in
-both modes. Native hosted macOS/Windows validation remains pending.
+both modes. Subsequent hosted platform validation is recorded in
+[PLAN.md, section 24](PLAN.md#24-hosted-platform-validation).
 
 ## Release acceptance checklist
 
-Checked items below are validated on local Linux; the final native CI gate is
-still required before tagging. Failure coverage follows the documented limits
-for shell redirection, partial stdout, filesystem races and abrupt termination.
+Checked items below are validated locally and by the native Linux/macOS/Windows
+[CI run on commit `16cfe64`](https://github.com/bdobrica/WebPTune/actions/runs/39074512319). Revalidate the
+final proposed release commit before tagging. Failure coverage follows the
+documented limits for shell redirection, partial stdout, filesystem races and
+abrupt termination.
 
 - [x] `cargo fmt --all -- --check` passes.
 - [x] `cargo clippy --all-targets -- -D warnings` passes.
@@ -339,4 +347,4 @@ for shell redirection, partial stdout, filesystem races and abrupt termination.
 - [x] Raw WebP on stdout has no text contamination.
 - [x] All failure paths return nonzero, preserve input and avoid partial final files.
 - [x] Limitations, non-optimality guarantee and scope are clearly documented.
-- [ ] Native Linux/macOS/Windows CI jobs pass on the proposed release commit.
+- [x] Native Linux/macOS/Windows CI jobs pass on the proposed release commit (`16cfe64`; revalidate after changes).

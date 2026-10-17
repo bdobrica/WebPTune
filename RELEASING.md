@@ -1,10 +1,13 @@
 # Preparing v0.1.0
 
-Release status: **pending hosted CI and macOS/Windows execution**. The package
-version is 0.1.0, but no release tag has been created. `publish = false` remains
-intentional: this is a source-build CLI, not a crates.io publication workflow.
-No Git remote is configured in the current checkout, so hosted workflow runs
-cannot be started here. Configuring a workflow does not count as passing it.
+Release status: **native Linux/macOS/Windows CI passed; tag pending**.
+[Hosted run 39074512319](https://github.com/bdobrica/WebPTune/actions/runs/39074512319) validated commit
+`16cfe644518dd4b73181e1ae0e812e88a568ea16` on all three platforms, including
+release builds, file replacement and independently scored release smoke checks.
+The package version is 0.1.0, but no release tag has been created.
+`publish = false` remains intentional: this is a source-build CLI, not a
+crates.io publication workflow. Revalidate the exact proposed release commit
+when it changes; an earlier passing run does not cover later code changes.
 
 ## Gates before tagging
 
@@ -22,8 +25,9 @@ cannot be started here. Configuring a workflow does not count as passing it.
    [benchmark results](benchmarks/RESULTS.md), documented limitations, license
    and package version. If distributing binaries later, include all applicable
    third-party notices and test each artifact on its target OS.
-5. Record the successful hosted run/commit in TODO.md and PLAN.md; only then
-   close Phase 7's platform checkbox and the remaining release gates.
+5. Keep the successful hosted run/commit recorded in TODO.md and PLAN.md.
+   Phase 7's platform checkbox is closed by the run above; the proposed release
+   commit must also pass the full matrix before tagging.
 
 Local validation commands from the checkout root:
 

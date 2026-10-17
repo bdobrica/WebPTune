@@ -31,10 +31,11 @@ Installing a system libwebp does not replace the bundled sources.
 
 | Release target | C toolchain | Validation |
 |---|---|---|
-| x86_64-unknown-linux-gnu | GCC/Clang and binutils; Debian/Ubuntu `build-essential` | Local WSL2 Linux tests/build/smoke; CI `ubuntu-24.04` configured |
-| aarch64-apple-darwin | Apple Clang and SDK from Xcode Command Line Tools | CI `macos-15` configured; execution pending |
-| x86_64-pc-windows-msvc | MSVC C++ build tools and Windows SDK | CI `windows-2022` configured; execution pending |
+| x86_64-unknown-linux-gnu | GCC/Clang and binutils; Debian/Ubuntu `build-essential` | Local WSL2 and hosted `ubuntu-24.04` tests/build/smoke [passed](https://github.com/bdobrica/WebPTune/actions/runs/39074512319) |
+| aarch64-apple-darwin | Apple Clang and SDK from Xcode Command Line Tools | Hosted `macos-15` tests/build/smoke [passed](https://github.com/bdobrica/WebPTune/actions/runs/39074512319) |
+| x86_64-pc-windows-msvc | MSVC C++ build tools and Windows SDK | Hosted `windows-2022` tests/build/smoke [passed](https://github.com/bdobrica/WebPTune/actions/runs/39074512319), including held-file replacement failure |
 
+The hosted results above validate commit `16cfe64`; revalidate after changes.
 These are the initial validation targets, not claims about other architectures,
 musl, MinGW or older OS versions. Hosted runner labels and installed software
 are described in [GitHub's runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).

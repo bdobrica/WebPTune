@@ -124,12 +124,14 @@ old destination, staged-write/rename failures, stdout failures and timed/ordinar
 evaluator equivalence. The integration matrix independently decodes and scores
 the fixture outputs; the benchmark complements those correctness tests.
 
-macOS and Windows were **not executed**. This host has no macOS runner and no
-Windows Rust/C toolchain available on PATH, although Windows PowerShell is
-callable through WSL. A Windows-only test now checks a destination opened without
-delete sharing, but it has not run. Windows ACL cases remain unverified. The
-Phase 7 cross-platform checkbox stays open until real platform runs, including
-replacement behavior, pass. Phase 8 CI can provide those runners.
+The benchmark measurements above were collected on Linux only. Subsequent
+[hosted CI on commit `16cfe64`](https://github.com/bdobrica/WebPTune/actions/runs/39074512319)
+passed native Linux, macOS and Windows tests, release builds and smoke checks,
+including file replacement and the Windows failure test for a destination
+opened without delete sharing. This closes Phase 7's cross-platform checkbox;
+it does not add macOS/Windows performance measurements. Windows ACL-specific
+denial cases remain outside the current suite. See
+[the platform validation record](../PLAN.md#24-hosted-platform-validation).
 
 Raw [portable samples](results/2026-10-18-linux-wsl2/portable.csv),
 [native samples](results/2026-10-18-linux-wsl2/native.csv) and

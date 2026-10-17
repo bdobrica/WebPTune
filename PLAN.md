@@ -1,6 +1,6 @@
 # Implementation Plan — webptune
 
-**Status:** Phases 0–6 implemented; Phase 7 local performance/robustness validated, macOS/Windows checks pending; Phase 8 documentation/CI implemented, hosted validation and tag pending; Phase 9 maximum-dimension resizing, exhaustive search, size policies and quiet mode implemented · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
+**Status:** Phases 0–6 implemented; Phase 7 performance/robustness and native Linux/macOS/Windows checks validated; Phase 8 documentation/CI validated, tag pending; Phase 9 maximum-dimension resizing, exhaustive search, size policies and quiet mode implemented · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
 
 ## 1. Purpose and scope
 
@@ -399,9 +399,10 @@ and [PNG decoder](https://docs.rs/image/0.25.10/image/codecs/png/struct.PngDecod
 
 `src/cli.rs` defines the testable Clap `Args` and typed `OutputTarget`.
 Input/output are required; only the exact output value `-` selects stdout.
-Paths retain native OS strings, including non-UTF-8 names on Unix. Threshold
-and scale are parsed as `f64`, checked for finiteness, and constrained to
-`[0,100]` and `(0,1]` respectively. Using `f64` avoids prematurely rounding tiny
+Paths retain native OS strings, including non-UTF-8 names where the Unix
+filesystem permits them. Threshold and scale are parsed as `f64`, checked for
+finiteness, and constrained to `[0,100]` and `(0,1]` respectively. Using `f64`
+avoids prematurely rounding tiny
 positive scales to zero; dimension rounding remains Phase 2 work.
 
 Path validation opens the existing regular input read-only and checks canonical
@@ -439,7 +440,7 @@ stdout and diagnostics on stderr. Phase 1 used an explicit pending-conversion
 error for valid requests; phases 2–5 now supply the complete image pipeline.
 Integration tests prove no output is created and existing files are preserved
 for validation failures. Unix symlink/non-UTF-8
-cases are conditional tests; macOS/Windows execution remains a Phase 7 task.
+cases are conditional tests; subsequent native execution is recorded in section 24.
 
 ## 14. Phase 2 image preparation decisions
 
@@ -651,9 +652,10 @@ file permissions normally result in mode `0600` for both new and replaced files.
 
 Contents are synced before replacement, but the parent directory is not synced;
 this is not a power-loss durability guarantee. Same-directory replacement relies
-on OS/filesystem semantics; Linux tests pass, with Windows/macOS execution still
-required in Phase 7. Filesystem manipulation after the final path check remains
-a race; path validation is not a guarantee against adversarial concurrent changes.
+on OS/filesystem semantics; native Linux/macOS/Windows tests passed in the
+hosted run recorded in section 24. Filesystem manipulation after the final path
+check remains a race; path validation is not a guarantee against adversarial
+concurrent changes.
 
 The CLI exits zero after the output operation succeeds, including an explicit
 size-based skip introduced in Phase 9 (section 23). Its stderr success
@@ -711,8 +713,9 @@ from the output directory, verify the OS actually returns `PermissionDenied`,
 then invoke the real CLI with absent and existing destinations. They restore
 permissions even during unwinding. These two tests explicitly report a skip
 when the user (such as root) or filesystem bypasses mode restrictions; Windows
-ACLs and macOS/Windows execution remain Phase 7 work. Both permission checks ran
-without skipping during Linux validation for this phase.
+ACL-specific denial tests remain outside this coverage. Native macOS/Windows
+execution is recorded in section 24. Both permission checks ran without skipping
+during Linux validation for this phase.
 
 The fixture generator now has a regression test that generates into two
 temporary directories, checks the complete filename sets, and compares every
@@ -755,12 +758,11 @@ open with read sharing but without delete sharing and requires replacement to
 fail without changing either file or leaving a staging file. That test is gated
 to Windows; Linux execution cannot validate it.
 
-Linux validation runs under WSL2. Windows PowerShell is callable, but no Windows
-Rust/C toolchain is available on PATH; no macOS runner is available. Windows and
-macOS execution, including their filesystem replacement semantics and Windows
-ACL behavior, remains explicitly unverified. Phase 7's cross-platform checkbox
-must stay open until those platforms actually run; Phase 8's CI matrix can
-provide those runs. Cross-compilation alone would not close this requirement.
+Initial local validation ran under WSL2 without a native macOS/Windows Rust/C
+toolchain. After repository publication, the native hosted matrix passed as
+recorded in section 24, closing Phase 7's cross-platform checkbox. This includes
+replacement behavior and Windows held-file sharing failure; Windows ACL-specific
+denial tests remain outside the current suite.
 
 The [reviewed baseline](benchmarks/RESULTS.md) records 48 fresh portable/native
 CLI conversions across eight 256²/768² workloads, plus eight memory-only runs:
@@ -777,7 +779,7 @@ buffers. The policy remains a guard, not a strict RSS cap or a guarantee for
 different inputs/platforms. Format, Clippy with denied warnings, all-target
 check, all 76 tests and portable/native release builds passed on Linux with
 locked/offline dependencies. The local performance/documentation gate is met;
-cross-platform execution remains open as described above.
+subsequent native cross-platform validation is recorded in section 24.
 
 ## 20. Phase 8 documentation, CI and release preparation
 
@@ -820,10 +822,10 @@ the full set of third-party license notices; this phase prepares source builds.
 
 [RELEASING.md](RELEASING.md) defines clean-checkout, hosted-matrix and output
 acceptance gates before tagging. Local Linux checks do not validate macOS or
-Windows. This checkout has no remote, so the workflow cannot be executed on
-GitHub here. The Phase 7 platform task remains open and v0.1.0 must remain
-untagged until native platform runs pass. The CI configuration has been checked
-with actionlint 1.7.12; that is workflow validation, not a hosted run.
+Windows. Following repository publication, the native hosted matrix passed
+(section 24), closing the Phase 7 platform task. The v0.1.0 tag remains pending;
+revalidate the final proposed release commit before tagging. The CI configuration
+also passed actionlint 1.7.12.
 
 
 Local Phase 8 validation on Linux (2026-10-18, Rust 1.89.0) passed format,
@@ -836,8 +838,8 @@ same Phase 8 changes as a temporary validation commit. With no target directory,
 rebuilt all dependencies from cached downloads; release smoke and README file/
 stdout quick starts passed, and Git status stayed clean before and after.
 The manifest, lockfile and Rust sources matched the working checkout. This
-closes the local documentation/clean-build gate; hosted CI and the release tag
-remain pending.
+closes the local documentation/clean-build gate. Subsequent hosted CI passed
+(section 24); the release tag remains pending.
 
 ## 21. Phase 9 — Maximum output dimensions
 
@@ -878,7 +880,7 @@ height-only, combined and oversized bounds at thresholds 90/100. Their outputs
 are independently decoded and scored against equivalent multiplier references,
 with checks for dimensions, alpha, identical file/stdout bytes, source
 preservation and staging cleanup. CI's existing all-target test step includes
-these tests on each configured platform; native hosted runs remain pending.
+these tests on each configured platform; the native hosted results are recorded in section 24.
 
 Local Linux validation (Rust 1.89.0) passed `cargo fmt --all -- --check`,
 `cargo clippy --all-targets --locked --offline -- -D warnings`,
@@ -937,7 +939,7 @@ Local Linux validation (Rust 1.89.0): formatting, Clippy with denied warnings,
 all 92 tests, locked/offline release build and independent release smoke checks
 passed. Actual release exhaustive file/stdout conversions also passed with
 102 reported trials and identical payloads. CI's existing all-target tests
-include the new coverage; native hosted macOS/Windows execution remains pending.
+include the new coverage; native hosted results are recorded in section 24.
 
 ## 23. Phase 9 — Size policies and quiet mode
 
@@ -991,4 +993,42 @@ smoke checker passed. Additional release checks exercised both search modes:
 an exact 52-byte cap, rejected smaller caps without output, a 70-to-304-byte
 recompression skipped without destination changes, equal-size writes, quiet
 payload equality, visible errors, skip/cap precedence and no staging leftovers.
-Native hosted macOS/Windows validation remains pending.
+Subsequent native hosted results are recorded in section 24.
+
+## 24. Hosted platform validation
+
+After publication, [run 39074051448](https://github.com/bdobrica/WebPTune/actions/runs/39074051448)
+validated commit `cd763c8` on Linux and Windows, including release builds and
+smoke checks. The macOS job compiled and passed Clippy, but failed while creating
+a test fixture named with an invalid UTF-8 byte: `fs::copy` returned Darwin
+`EILSEQ` (92, “Illegal byte sequence”) before the image loader ran.
+
+The input-format test now covers valid Unicode and space-containing filenames
+on every platform. The Unix raw-byte filename check still runs whenever fixture
+creation succeeds. Only macOS fixture creation returning `EILSEQ` is reported as
+unavailable; every other creation error and every loader error still fails.
+The application continues using native paths; no codec, scoring, output or
+workflow behavior changed.
+
+[Run 39074512319](https://github.com/bdobrica/WebPTune/actions/runs/39074512319) passed the full workflow on
+commit `16cfe644518dd4b73181e1ae0e812e88a568ea16` with Rust 1.89.0:
+
+| Native runner | Tests | Release build and smoke |
+|---|---|---|
+| Ubuntu 24.04 x86_64 GNU/Linux | 101 passed, including Unix replacement and permission-denial checks | Passed |
+| macOS 15 Apple Silicon | 101 passed, including replacement; raw-byte filename creation handled as above | Passed |
+| Windows 2022 x86_64 MSVC | 95 passed, including replacement failure when the destination is held without delete sharing | Passed |
+
+All jobs passed formatting, denied-warning Clippy, all-target tests, the locked
+release build, the independent release smoke checker and the clean-tracked-files
+check. Test totals differ because some filesystem tests are platform-specific.
+The run includes the Phase 9 dimension bounds, exhaustive search and
+size-policy/quiet-mode changes. Release smoke verifies replacement, file/stdout
+byte equality, independent decoded scores, dimensions, alpha, source preservation
+and cleanup.
+
+This closes Phase 7's platform checkbox and the native CI release acceptance
+gate for that commit. It validates the tested native runner environments and
+filesystems; it does not add Windows ACL-denial coverage or certify other OS/CPU
+combinations. The v0.1.0 tag remains pending, and the exact proposed release
+commit must pass the matrix before tagging. No tag or release was created.
