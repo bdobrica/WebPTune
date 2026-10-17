@@ -1,0 +1,19 @@
+[package]
+name = "webp-ssim-optimizer"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+description = "A WebP optimizer with a measured SSIMULACRA2 quality floor"
+license = "MIT"
+publish = false
+
+[dependencies]
+anyhow = "1"
+clap = { version = "~4.5", features = ["derive"] }
+fast-ssim2 = "0.9"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp"] }
+webp = { version = "0.3", default-features = false }
+
+[[example]]
+name = "api_spike"
+test = true
