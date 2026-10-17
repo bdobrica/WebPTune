@@ -1,8 +1,8 @@
 # Input fixtures
 
 All image pixels are deterministic synthetic data created for WebP SSIM
-Optimizer. They contain no external assets and use the repository's MIT license.
-Regenerate the corpus from the repository root with:
+Optimizer. They contain no external assets and use the repository's Apache 2.0
+license. Regenerate the corpus from the repository root with:
 
 ```bash
 cargo run --locked --example generate_fixtures

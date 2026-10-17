@@ -1,6 +1,6 @@
 # Implementation Plan — WebP SSIM Optimizer
 
-**Status:** Phases 0–6 implemented; Phase 7 local performance/robustness validated, macOS/Windows checks pending; Phase 8 planned · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
+**Status:** Phases 0–6 implemented; Phase 7 local performance/robustness validated, macOS/Windows checks pending; Phase 8 documentation/CI implemented, hosted validation and tag pending · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
 
 ## 1. Purpose and scope
 
@@ -696,7 +696,7 @@ The fixture generator now has a regression test that generates into two
 temporary directories, checks the complete filename sets, and compares every
 image byte with both runs and the committed corpus under the locked dependency
 versions. No external assets or new dependencies are needed; fixture provenance
-and the repository MIT license are recorded in `tests/fixtures/README.md`.
+and the repository Apache 2.0 license are recorded in `tests/fixtures/README.md`.
 
 ## 19. Phase 7 performance and robustness
 
@@ -725,7 +725,7 @@ but the application has no new dependency.
 Corpus provenance, reproducible commands, measurement definitions, representative
 results and limitations are recorded in [benchmarks/README.md](benchmarks/README.md).
 The included NASA photograph is public domain, distinct from the project-authored
-MIT test fixtures. Above 512×512 it is upsampled; noise is added after resizing.
+Apache 2.0 test fixtures. Above 512×512 it is upsampled; noise is added after resizing.
 
 Replacement coverage now includes preserving another hard link to an unrelated
 old destination on every platform. A Windows-specific test holds the destination
@@ -756,3 +756,63 @@ different inputs/platforms. Format, Clippy with denied warnings, all-target
 check, all 76 tests and portable/native release builds passed on Linux with
 locked/offline dependencies. The local performance/documentation gate is met;
 cross-platform execution remains open as described above.
+
+## 20. Phase 8 documentation, CI and release preparation
+
+The README now starts with runnable file/stdout quick starts using committed
+fixtures, including Windows commands that preserve binary stdout. Installation
+uses a local checkout or `cargo install --path . --locked`; there is no invented
+remote URL or crates.io package. The toolchain is pinned to Rust 1.89.0. Flags,
+score meaning, resized-reference semantics, heuristic selection, error codes,
+source safety, overwrite behavior, color/metadata scope and memory limits remain
+explicit. Package metadata now matches the Apache-2.0 license chosen by the
+repository owner, with README, categories and keywords added. Version 0.1.0 and
+`publish = false` are retained.
+
+`.github/workflows/ci.yml` validates fresh checkouts on `ubuntu-24.04` x86_64,
+`macos-15` Apple Silicon and `windows-2022` MSVC, on pushes, pull requests or
+manual dispatch. It installs the checked-in Rust toolchain via rustup, then
+runs formatting, denied-warning Clippy, all-target tests (including native
+replacement behavior), a locked portable release build and a release smoke
+checker. Jobs have a time limit, read-only contents permission, independent
+matrix failures, no retained checkout credentials, and a pinned checkout commit.
+No publishing or tag creation is automated.
+
+`examples/smoke.rs` launches the specified executable directly. It checks its
+version, RGB/RGBA fixture conversion at scale 0.5/threshold 90, replacement of an
+old destination, empty stdout for file output, exact binary stdout/file equality,
+source preservation and temporary-file cleanup. Written bytes are independently
+decoded and scored through the one-shot metric API, bypassing the application's
+cached metric/view helper. Dimensions must be 9×6 and reference alpha must be
+preserved. This complements the full integration matrix without adding a
+runtime or CI Python dependency.
+
+[DEPENDENCIES.md](DEPENDENCIES.md) records locked direct versions, licenses,
+feature choices, transitive decoder choices, bundled libwebp/SharpYUV C build
+requirements and platform limits. `webp` defaults are disabled, but its
+`libwebp-sys` dependency's own default features remain enabled. No system codec,
+CMake, pkg-config or bindgen is used. A specific existing libwebp advisory was
+checked against the patched crate range; this is not a full security audit.
+No dependency versions changed. Redistributable binary archives would require
+the full set of third-party license notices; this phase prepares source builds.
+
+[RELEASING.md](RELEASING.md) defines clean-checkout, hosted-matrix and output
+acceptance gates before tagging. Local Linux checks do not validate macOS or
+Windows. This checkout has no remote, so the workflow cannot be executed on
+GitHub here. The Phase 7 platform task remains open and v0.1.0 must remain
+untagged until native platform runs pass. The CI configuration has been checked
+with actionlint 1.7.12; that is workflow validation, not a hosted run.
+
+
+Local Phase 8 validation on Linux (2026-10-18, Rust 1.89.0) passed format,
+Clippy with denied warnings, all 76 tests, the portable release build and the
+independent release smoke check. Both README quick starts produced identical
+WebP bytes, and local-path installation into an isolated prefix reported
+version 0.1.0. For clean-build validation, a fresh local Git clone received the
+same Phase 8 changes as a temporary validation commit. With no target directory,
+`cargo build --release --locked --offline --bin webp-ssim-optimizer --example smoke`
+rebuilt all dependencies from cached downloads; release smoke and README file/
+stdout quick starts passed, and Git status stayed clean before and after.
+The manifest, lockfile and Rust sources matched the working checkout. This
+closes the local documentation/clean-build gate; hosted CI and the release tag
+remain pending.

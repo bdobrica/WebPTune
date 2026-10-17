@@ -51,7 +51,7 @@ the measured application applies its processing/resize limits before decoding.
   SHA-256: `88431cd9653ccd539741b555fb0a46b61558b301d4110412b5bc28b5e3ea6cb5`.
   Scikit-image documents it as [public domain, with no known copyright
   restrictions](https://scikit-image.org/docs/0.25.x/api/skimage.data.html#skimage.data.astronaut).
-  That provenance applies to this photograph; it is not a project-authored MIT fixture.
+  That provenance applies to this photograph; it is not a project-authored test fixture.
 - **Noisy photo:** the same resized photograph with deterministic independent
   uniform noise in [-32, 32] added to each channel using xorshift32.
 - **Icon:** a generated flat-color geometric icon with hard edges.
@@ -60,8 +60,8 @@ the measured application applies its processing/resize limits before decoding.
 
 Generated workloads are square PNGs, RGB8 for the first three and RGBA8 for art.
 The generator is in [examples/benchmark.rs](../examples/benchmark.rs); its code
-and generated icon/art are under the project's MIT license. Lanczos3 resizing
-of the photo happens during corpus generation. Sizes above 512 are upsampled
+and generated icon/art are under the project's Apache 2.0 license. Lanczos3
+resizing of the photo happens during corpus generation. Sizes above 512 are upsampled
 workloads, not new high-resolution photographic detail. Noise is added after
 resizing. The stage/CPU comparison uses scale 1 and threshold 80 unless
 overridden; separate memory-only runs probe large-source resizing. These

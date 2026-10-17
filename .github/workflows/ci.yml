@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  validate:
+    name: Rust 1.89 / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            exe: ""
+          - os: macos-15
+            exe: ""
+          - os: windows-2022
+            exe: .exe
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup show
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Lint all targets
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Run all tests, including native file replacement
+        run: cargo test --all-targets --locked
+      - name: Build release binary and smoke checker
+        run: cargo build --release --locked --bin webp-ssim-optimizer --example smoke
+      - name: Verify release file and stdout conversions
+        run: cargo run --release --locked --example smoke -- target/release/webp-ssim-optimizer${{ matrix.exe }}
+      - name: Check that validation did not modify tracked files
+        run: git diff --exit-code

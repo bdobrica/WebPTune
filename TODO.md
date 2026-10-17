@@ -189,7 +189,7 @@ inputs, animation and allocation/codec limits, preserving existing destinations
 and leaving no staging files. Unix unreadable-source and unwritable-directory
 tests ran with real permission denial; they report a skip on systems that bypass
 mode restrictions. Impossible valid thresholds use the existing synthetic search
-tests; real fixtures reach 100 through measured lossless. The MIT synthetic
+tests; real fixtures reach 100 through measured lossless. The project-authored synthetic
 fixture generator is now tested for byte-identical regeneration twice against
 the committed corpus. See [PLAN.md, section 18](PLAN.md#18-phase-6-functional-and-integration-coverage)
 for coverage boundaries; cross-platform execution remains Phase 7 work.
@@ -225,15 +225,44 @@ replacement behavior. See [PLAN.md, section 19](PLAN.md#19-phase-7-performance-a
 
 ## Phase 8 — Documentation, CI and release (M5)
 
-- [ ] Complete `README.md`: quick start, install, flags, examples, score meaning, limitations.
-- [ ] Keep `PLAN.md` aligned with decisions and `TODO.md` checked off as completed.
-- [ ] Add GitHub Actions for format, lint, tests, release build and smoke test.
-- [ ] Add `LICENSE`, repository description, and release version metadata.
-- [ ] Validate building with `--locked` from a clean checkout.
-- [ ] Review dependencies and native libwebp build requirements for release targets.
+- [x] Complete `README.md`: quick start, install, flags, examples, score meaning, limitations.
+- [x] Keep `PLAN.md` aligned with decisions and `TODO.md` checked off as completed.
+- [x] Add GitHub Actions for format, lint, tests, release build and smoke test.
+- [x] Add `LICENSE`, repository description, and release version metadata.
+- [x] Validate building with `--locked` from a clean checkout.
+- [x] Review dependencies and native libwebp build requirements for release targets.
 - [ ] Tag v0.1.0 after all acceptance gates pass.
 
 **Gate:** new users can build and successfully run both `-o file.webp` and `-o -` from README instructions.
+
+Phase 8 implementation includes executable quick-start examples, local-path
+installation, platform C-toolchain prerequisites, the complete flags/score/limits
+guide, [dependency review](DEPENDENCIES.md) and [release procedure](RELEASING.md).
+Package metadata declares v0.1.0, Apache-2.0, README, description, categories and
+keywords. The Apache license decision is reflected in all current licensing
+descriptions, including fixture and benchmark provenance.
+
+The [CI workflow](.github/workflows/ci.yml) runs format, Clippy, all-target tests,
+a locked release build and release smoke checks on Ubuntu 24.04 x86_64, macOS 15
+Apple Silicon and Windows 2022 MSVC. It uses the pinned repository toolchain,
+read-only permissions and a commit-pinned checkout action. `examples/smoke.rs`
+checks the actual binary's version, RGB/RGBA conversions, existing-file
+replacement, file/stdout byte equality, independent decoded score >=90, resized
+dimensions, alpha, source preservation and cleanup.
+
+Linux validation (Rust 1.89.0, 2026-10-18): format, Clippy with denied warnings,
+all 76 tests, portable release build, independent release smoke checks, both
+README quick starts with byte-identical output, and local-path installation
+passed. An isolated local Git clone with the same Phase 8 changes committed as
+a validation snapshot built with `--release --locked --offline` from an empty
+target directory; smoke and quick starts passed there too, with clean Git status
+before and after. Cargo reused only downloaded sources, not compiled artifacts.
+The source manifest, lockfile and Rust sources matched the working checkout.
+
+Hosted execution remains pending: this checkout has no Git remote and there is
+no local macOS/Windows Rust/C toolchain. Workflow configuration is validated with
+`actionlint`; it does not count as passing hosted CI. Phase 7's platform check
+and the v0.1.0 tag remain open until actual native runs pass.
 
 ## Phase 9 — Deferred enhancements (NOT required for MVP)
 
@@ -246,13 +275,18 @@ replacement behavior. See [PLAN.md, section 19](PLAN.md#19-phase-7-performance-a
 
 ## Release acceptance checklist
 
-- [ ] `cargo fmt --all -- --check` passes.
-- [ ] `cargo clippy --all-targets -- -D warnings` passes.
-- [ ] `cargo test --all-targets` passes.
-- [ ] `cargo build --release --locked` passes.
-- [ ] Output is valid WebP at correct dimensions.
-- [ ] Measured output score meets the threshold on every successful fixture.
-- [ ] Smallest **tested feasible** candidate is selected.
-- [ ] Raw WebP on stdout has no text contamination.
-- [ ] All failure paths return nonzero, preserve input and avoid partial final files.
-- [ ] Limitations, non-optimality guarantee and scope are clearly documented.
+Checked items below are validated on local Linux; the final native CI gate is
+still required before tagging. Failure coverage follows the documented limits
+for shell redirection, partial stdout, filesystem races and abrupt termination.
+
+- [x] `cargo fmt --all -- --check` passes.
+- [x] `cargo clippy --all-targets -- -D warnings` passes.
+- [x] `cargo test --all-targets` passes.
+- [x] `cargo build --release --locked` passes.
+- [x] Output is valid WebP at correct dimensions.
+- [x] Measured output score meets the threshold on every successful fixture.
+- [x] Smallest **tested feasible** candidate is selected.
+- [x] Raw WebP on stdout has no text contamination.
+- [x] All failure paths return nonzero, preserve input and avoid partial final files.
+- [x] Limitations, non-optimality guarantee and scope are clearly documented.
+- [ ] Native Linux/macOS/Windows CI jobs pass on the proposed release commit.

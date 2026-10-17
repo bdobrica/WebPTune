@@ -4,7 +4,10 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.89"
 description = "A WebP optimizer with a measured SSIMULACRA2 quality floor"
-license = "MIT"
+license = "Apache-2.0"
+readme = "README.md"
+keywords = ["webp", "image", "ssimulacra2", "optimization", "cli"]
+categories = ["command-line-utilities", "multimedia::images"]
 publish = false
 
 [dependencies]

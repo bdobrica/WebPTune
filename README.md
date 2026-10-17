@@ -1,19 +1,40 @@
 # WebP SSIM Optimizer
 
-**Status: Phases 0–6 complete; Phase 7 performance and robustness work implemented and validated on Linux.** macOS/Windows execution remains unverified, with the Phase 7 platform check still open. Documentation, CI and release work remains in Phase 8. Implementation is tracked in [TODO.md](TODO.md) and designed in [PLAN.md](PLAN.md).
+Convert JPEG, PNG, WebP or BMP still images to WebP with a minimum measured
+**SSIMULACRA2** score. The tool encodes candidates, decodes and scores them, then
+writes the smallest **tested** output meeting the threshold. It can resize first
+and preserves transparency.
 
-To build and validate the current implementation:
+**Status:** v0.1.0 is in release preparation. Linux validation passes; the
+[CI matrix](.github/workflows/ci.yml) is configured for Linux, macOS and Windows,
+but hosted runs and macOS/Windows validation are still pending. There is no
+release tag yet. Progress is tracked in [TODO.md](TODO.md); release gates and
+commands are in [RELEASING.md](RELEASING.md).
+
+## Quick start
+
+From the repository root, with the [build prerequisites](#installation) installed:
 
 ```bash
-cargo check --all-targets --locked
-cargo build --locked
-cargo run --locked --example api_spike
-cargo test --all-targets --locked
+cargo build --release --locked
+target/release/webp-ssim-optimizer -i tests/fixtures/rgb.png -o target/quickstart.webp
+target/release/webp-ssim-optimizer -i tests/fixtures/rgb.png -o - > target/quickstart-stdout.webp
 ```
 
-`rust-toolchain.toml` selects Rust 1.89.0 with rustfmt and Clippy. A C compiler and archiver are required: `libwebp-sys` builds its bundled libwebp sources. Input and output flags are required; supported still images are decoded, optionally resized, and normalized. The command searches lossy qualities and measures lossless using one cached metric reference, then writes the smallest tested candidate meeting `--threshold`. After writing, it reports the selected mode/quality, dimensions, byte count, decoded score and trial count on stderr. `--verbose` adds each trial's size and decoded score. See [image preparation](PLAN.md#14-phase-2-image-preparation-decisions), [evaluation](PLAN.md#15-phase-3-metric-and-trial-evaluation), [search](PLAN.md#16-phase-4-search-and-selection) and [output decisions](PLAN.md#17-phase-5-output-and-reporting).
+Both outputs are WebP images; the conversion summary goes to stderr. Replace the
+fixture path with your image. The binary stays in `target/release` unless you
+install it on your PATH.
 
-Convert a supported still image into a compact WebP file while enforcing a minimum **SSIMULACRA2** perceptual similarity score. Rather than choosing a fixed WebP encoder quality in advance, the tool encodes candidates in memory, decodes and scores them, and writes the smallest **tested** output that meets your requested quality floor.
+On Windows, build with the same Cargo command, then run these from PowerShell:
+
+```powershell
+.\target\release\webp-ssim-optimizer.exe -i tests/fixtures/rgb.png -o target/quickstart.webp
+cmd /d /c "target\release\webp-ssim-optimizer.exe -i tests/fixtures/rgb.png -o - > target\quickstart-stdout.webp"
+```
+
+The stdout example uses `cmd` for byte-preserving redirection, including when
+launched from Windows PowerShell 5.1. Keep a redirection target separate from the
+source: the shell opens it before the application starts.
 
 ## Features
 
@@ -30,15 +51,38 @@ The algorithm is a **fast heuristic**, not an exhaustive global size optimizer. 
 
 ## Installation
 
-Prerequisites: a Rust toolchain with Rust **1.89 or newer** (initial target MSRV), Cargo, and a platform toolchain capable of building `webp`/its native dependencies.
+Install [Rust through rustup](https://rustup.rs/) and a native C build toolchain.
+The checked-in `rust-toolchain.toml` selects **Rust 1.89.0**, rustfmt and Clippy;
+1.89 is the minimum supported Rust version for the locked dependencies.
+
+| Platform | Native build tools | CI target |
+|---|---|---|
+| Linux | GCC or Clang, linker and archiver; on Debian/Ubuntu: `sudo apt-get install build-essential` | x86_64 GNU/Linux |
+| macOS | Xcode Command Line Tools: `xcode-select --install` | Apple Silicon (aarch64) |
+| Windows | Visual Studio 2022 Build Tools, **Desktop development with C++**, MSVC and Windows SDK; use Rust's MSVC host | x86_64 MSVC |
+
+`libwebp-sys` compiles bundled libwebp and SharpYUV. No system libwebp package,
+CMake, pkg-config or separate codec executable is required by this build. See
+[the dependency and native-build review](DEPENDENCIES.md) for the locked versions,
+features and platform validation limits.
+
+Open a terminal in your downloaded or cloned checkout and build:
 
 ```bash
-git clone <REPOSITORY_URL>
-cd webp-ssim-optimizer
 cargo build --release --locked
 ```
 
-The binary will be located at `target/release/webp-ssim-optimizer` (or `.exe` on Windows). The repository URL will be filled in when the project is published.
+The executable is `target/release/webp-ssim-optimizer` (`.exe` on Windows).
+To install it on your Cargo binary PATH from this checkout:
+
+```bash
+cargo install --path . --locked
+webp-ssim-optimizer --version
+```
+
+The package is not published to crates.io (`publish = false`); installation is
+from source. No remote URL is configured in this checkout yet. The commands in
+[Quick start](#quick-start) need no PATH change and use the included fixtures.
 
 For a machine-specific optimized build, optionally use:
 
@@ -146,10 +190,21 @@ output contains only WebP bytes. Input `-` is unsupported.
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --all-targets -- -D warnings
-cargo test --all-targets
-cargo build --release --locked
+cargo clippy --all-targets --locked -- -D warnings
+cargo test --all-targets --locked
+cargo build --release --locked --bin webp-ssim-optimizer --example smoke
+cargo run --release --locked --example smoke -- target/release/webp-ssim-optimizer
 ```
+
+On Windows append `.exe` to the smoke command's final path. The smoke checker
+executes the release binary for RGB/RGBA inputs, replaces an existing file,
+compares file/stdout bytes, independently decodes/scores them, and verifies
+scaled dimensions, alpha and source preservation.
+
+[CI](.github/workflows/ci.yml) runs the commands above on push, pull request and
+manual dispatch on all three target platforms. Each job uses a fresh checkout
+and the repository toolchain, including native replacement tests. It validates
+builds without publishing packages, tags or binaries. Hosted execution is pending.
 
 The suite covers argument and allocation limits, CLI process behavior, all four
 input formats, rounded/tiny resizing, RGB/RGBA normalization, grayscale/16-bit
@@ -198,7 +253,10 @@ See [PLAN.md](PLAN.md) for architecture, edge cases, algorithm decisions, releas
 
 ## License
 
-Licensed under the [MIT License](LICENSE). This project is not yet released or ready for production.
+Licensed under the [Apache License 2.0](LICENSE). The NASA benchmark photograph
+is public domain; its [provenance](benchmarks/README.md#workloads-and-provenance)
+is recorded separately. Dependencies retain their own licenses; see
+[DEPENDENCIES.md](DEPENDENCIES.md).
 
 ## References
 
