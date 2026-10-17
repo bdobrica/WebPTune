@@ -1,4 +1,4 @@
-# webptune
+# WebPTune
 
 Convert JPEG, PNG, WebP or BMP still images to WebP with a minimum measured
 **SSIMULACRA2** score. The tool encodes candidates, decodes and scores them, then
