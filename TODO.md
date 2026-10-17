@@ -267,7 +267,7 @@ and the v0.1.0 tag remain open until actual native runs pass.
 ## Phase 9 — Deferred enhancements (NOT required for MVP)
 
 - [x] Add `--scale-width` and `--scale-height` arguments as alternatives to `--scale`, allowing users to specify maximum output dimensions. Resize the image to fit within the specified bounds while preserving its original aspect ratio, without cropping or stretching.
-- [ ] Add `--search exhaustive` (all 101 integer lossy qualities + lossless), with guarantee limited to this set.
+- [x] Add `--search exhaustive` (all 101 integer lossy qualities + lossless), with guarantee limited to this set.
 - [ ] Add `--skip-if-larger`, `--max-bytes`, JSON reporting or quiet mode.
 - [ ] Add batch/directory mode with bounded parallelism.
 - [ ] Add color profile support, EXIF orientation and 16-bit/HDR pathway.
@@ -288,6 +288,22 @@ passed. The release binary also fitted the RGBA fixture from 17×11 to 8×5
 within 9×5 bounds at threshold 100, with identical file/stdout bytes. The new
 tests include 56 bounded CLI conversions, independently decoded and scored at
 thresholds 90/100. Hosted/native macOS and Windows validation remains pending.
+
+Exhaustive search is available through `--search exhaustive`; `heuristic` remains
+the default. It measures all 101 integer lossy qualities and lossless, then
+chooses the smallest feasible output using the existing tie breaks. The
+guarantee covers only this fixed set at the current encoder settings. Any
+evaluation error aborts without a partial winner or output. Complete-set
+threshold failures report all 102 trials. README/help document the added work
+and guarantee scope. See [PLAN.md, section 22](PLAN.md#22-phase-9--exhaustive-quality-search).
+
+Local Linux validation (Rust 1.89.0): formatting, Clippy with denied warnings,
+all 92 tests, locked/offline release build and independent release smoke checks
+passed. A full-set oracle independently scores every candidate for RGB, RGBA,
+tiny and transparent inputs; exhaustive selections match at thresholds 0/80/100.
+Twelve additional CLI conversions check file/stdout equality, dimensions/alpha,
+102 verbose trials, unchanged sources and cleanup. Release exhaustive file and
+stdout checks also passed. Native hosted macOS/Windows validation remains pending.
 
 ## Release acceptance checklist
 

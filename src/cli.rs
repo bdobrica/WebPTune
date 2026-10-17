@@ -9,6 +9,7 @@ use anyhow::{bail, ensure, Context, Result};
 use clap::{builder::TypedValueParser, Parser};
 
 use crate::limits::Resize;
+use crate::search::SearchMode;
 
 /// A literal `-` selects binary stdout; every other value is a file path.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,7 +61,7 @@ fn parse_dimension(value: &str) -> std::result::Result<u32, String> {
 #[derive(Clone, Debug, Parser)]
 #[command(
     version,
-    after_help = "Examples:\n  webptune -i photo.png -o photo.webp -t 90 -s 0.5\n  webptune -i photo.png -o photo.webp --scale-width 1920 --scale-height 1080\n  webptune -i photo.png -o - > photo.webp\n\nDimension bounds preserve aspect ratio (rounded to whole pixels) without cropping, stretching or upscaling. Use either bound or both, as an alternative to --scale.\n\nExisting destination files are replaced only after the complete WebP is ready. The input file cannot be the destination. Reports go to stderr; '-o -' writes only WebP bytes to stdout."
+    after_help = "Examples:\n  webptune -i photo.png -o photo.webp -t 90 -s 0.5\n  webptune -i photo.png -o photo.webp --scale-width 1920 --scale-height 1080\n  webptune -i photo.png -o photo.webp --search exhaustive -t 90\n  webptune -i photo.png -o - > photo.webp\n\nDimension bounds preserve aspect ratio (rounded to whole pixels) without cropping, stretching or upscaling. Use either bound or both, as an alternative to --scale.\n\nExhaustive search evaluates all integer lossy qualities 0 through 100 plus lossless. It guarantees the smallest feasible result only within this fixed set at the current encoder settings, and takes more work than the default heuristic.\n\nExisting destination files are replaced only after the complete WebP is ready. The input file cannot be the destination. Reports go to stderr; '-o -' writes only WebP bytes to stdout."
 )]
 pub struct Args {
     /// Source still image (JPEG, PNG, WebP or BMP); stdin is not supported
@@ -86,6 +87,10 @@ pub struct Args {
     /// Maximum output height in pixels; preserve aspect ratio, never upscale
     #[arg(long, value_name = "PIXELS", value_parser = parse_dimension, allow_hyphen_values = true)]
     pub scale_height: Option<u32>,
+
+    /// Search strategy; exhaustive finds the smallest feasible of 102 fixed candidates
+    #[arg(long, value_enum, default_value = "heuristic", value_name = "MODE")]
+    pub search: SearchMode,
 
     /// Print detailed progress and trial diagnostics to stderr
     #[arg(short, long)]
@@ -211,11 +216,32 @@ mod tests {
         assert_eq!(args.resize(), Resize::Scale(1.0));
         assert_eq!(args.scale_width, None);
         assert_eq!(args.scale_height, None);
+        assert_eq!(args.search, SearchMode::Heuristic);
         assert!(!args.verbose);
         let args = parse(&["-t", "90", "-s", "0.5", "-v"]).unwrap();
         assert_eq!(args.threshold, 90.0);
         assert_eq!(args.scale, 0.5);
         assert!(args.verbose);
+    }
+
+    #[test]
+    fn search_accepts_only_supported_strategies() {
+        for (name, mode) in [
+            ("heuristic", SearchMode::Heuristic),
+            ("exhaustive", SearchMode::Exhaustive),
+        ] {
+            assert_eq!(parse(&["--search", name]).unwrap().search, mode);
+            assert_eq!(parse(&[&format!("--search={name}")]).unwrap().search, mode);
+        }
+        for value in ["fast", "thorough", "EXHAUSTIVE", "101", ""] {
+            let error = parse(&["--search", value]).unwrap_err();
+            assert_eq!(error.kind(), clap::error::ErrorKind::InvalidValue);
+            assert!(error.to_string().contains("heuristic, exhaustive"));
+        }
+        assert_eq!(
+            parse(&["--search"]).unwrap_err().kind(),
+            clap::error::ErrorKind::InvalidValue
+        );
     }
 
     #[test]

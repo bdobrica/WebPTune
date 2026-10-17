@@ -1,8 +1,9 @@
-//! Bounded heuristic search; selection is exact only over the measured trials.
+//! Heuristic or exhaustive search over integer lossy qualities and lossless.
 
 use std::fmt;
 
 use anyhow::{ensure, Context, Result};
+use clap::ValueEnum;
 
 use crate::encoder::{Mode, TrialEvaluator};
 
@@ -12,6 +13,15 @@ pub use crate::encoder::Trial as Candidate;
 
 const MAX_BINARY_STEPS: usize = 7;
 const BOUNDARY_RADIUS: u8 = 4;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum SearchMode {
+    /// Bounded binary search and nearby probes; at most 19 measured trials
+    #[default]
+    Heuristic,
+    /// All 101 integer lossy qualities plus lossless; 102 measured trials
+    Exhaustive,
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct SearchOptions {
@@ -84,21 +94,26 @@ impl SearchResult {
     }
 }
 
-/// No tested candidate passed; untested qualities may still be feasible.
+/// No tested candidate passed. The mode determines whether qualities were skipped.
 #[derive(Debug)]
 pub struct ThresholdUnachievable {
     pub threshold: f64,
     pub best_score: f64,
     pub evaluated_candidates: usize,
+    pub search_mode: SearchMode,
 }
 
 impl fmt::Display for ThresholdUnachievable {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "no tested candidate satisfies SSIMULACRA2 threshold {} (best measured score {}; {} trials); heuristic search may miss untested feasible qualities",
+            "no tested candidate satisfies SSIMULACRA2 threshold {} (best measured score {}; {} trials)",
             self.threshold, self.best_score, self.evaluated_candidates
-        )
+        )?;
+        match self.search_mode {
+            SearchMode::Heuristic => write!(formatter, "; heuristic search may miss untested feasible qualities"),
+            SearchMode::Exhaustive => write!(formatter, "; exhaustive search evaluated all 101 integer lossy qualities and lossless with the current encoder settings"),
+        }
     }
 }
 
@@ -110,6 +125,21 @@ pub fn search(evaluator: &TrialEvaluator<'_>, threshold: f64) -> Result<SearchRe
     search_with_options(evaluator, threshold, SearchOptions::default())
 }
 
+/// Exhaustive mode chooses the smallest feasible result across all 101 integer
+/// lossy qualities and lossless, with the evaluator's fixed encoder settings.
+/// This does not cover fractional qualities or other encoder configurations.
+/// Either mode aborts on an evaluation error without returning a partial result.
+pub fn search_with_mode(
+    evaluator: &TrialEvaluator<'_>,
+    threshold: f64,
+    mode: SearchMode,
+) -> Result<SearchResult> {
+    search_using(threshold, mode, SearchOptions::default(), |mode| {
+        evaluator.evaluate(mode)
+    })
+}
+
+/// Run the heuristic with a custom lossy evaluation budget.
 pub fn search_with_options(
     evaluator: &TrialEvaluator<'_>,
     threshold: f64,
@@ -125,6 +155,15 @@ fn search_with(
     options: SearchOptions,
     evaluate: impl FnMut(Mode) -> Result<Candidate>,
 ) -> Result<SearchResult> {
+    search_using(threshold, SearchMode::Heuristic, options, evaluate)
+}
+
+fn search_using(
+    threshold: f64,
+    mode: SearchMode,
+    mut options: SearchOptions,
+    evaluate: impl FnMut(Mode) -> Result<Candidate>,
+) -> Result<SearchResult> {
     ensure!(
         threshold.is_finite() && (0.0..=100.0).contains(&threshold),
         "threshold must be a finite number in [0, 100]"
@@ -133,6 +172,9 @@ fn search_with(
         (2..=101).contains(&options.max_lossy_trials),
         "lossy evaluation budget must be in 2..=101"
     );
+    if mode == SearchMode::Exhaustive {
+        options.max_lossy_trials = 101;
+    }
     let mut state = SearchState {
         threshold,
         options,
@@ -142,11 +184,41 @@ fn search_with(
         trials: Vec::new(),
         best: None,
     };
+    match mode {
+        SearchMode::Heuristic => heuristic(&mut state)?,
+        SearchMode::Exhaustive => {
+            for quality in 0..=100 {
+                state
+                    .lossy(quality)?
+                    .expect("exhaustive budget covers every integer quality");
+            }
+        }
+    }
+    // Never assume lossless is feasible, or skip it because lossy passed.
+    state.evaluate(Mode::Lossless)?;
+
+    let candidate = state.best.ok_or_else(|| ThresholdUnachievable {
+        threshold,
+        best_score: state
+            .trials
+            .iter()
+            .map(|trial| trial.score)
+            .fold(f64::NEG_INFINITY, f64::max),
+        evaluated_candidates: state.trials.len(),
+        search_mode: mode,
+    })?;
+    Ok(SearchResult {
+        candidate,
+        trials: state.trials,
+    })
+}
+
+fn heuristic(state: &mut SearchState<impl FnMut(Mode) -> Result<Candidate>>) -> Result<()> {
     let zero = state.lossy(0)?.expect("budget includes both endpoints");
     state.lossy(100)?;
 
     let mut boundary = 0;
-    if !zero.is_feasible(threshold) {
+    if !zero.is_feasible(state.threshold) {
         boundary = 100;
         let (mut low, mut high) = (1, 99);
         // Run even if q=100 fails: its score cannot rule out lower qualities.
@@ -158,7 +230,7 @@ fn search_with(
             let Some(trial) = state.lossy(quality)? else {
                 break;
             };
-            if trial.is_feasible(threshold) {
+            if trial.is_feasible(state.threshold) {
                 boundary = quality;
                 high = quality - 1;
             } else {
@@ -173,22 +245,7 @@ fn search_with(
             break;
         }
     }
-    // Never assume lossless is feasible, or skip it because lossy passed.
-    state.evaluate(Mode::Lossless)?;
-
-    let candidate = state.best.ok_or_else(|| ThresholdUnachievable {
-        threshold,
-        best_score: state
-            .trials
-            .iter()
-            .map(|trial| trial.score)
-            .fold(f64::NEG_INFINITY, f64::max),
-        evaluated_candidates: state.trials.len(),
-    })?;
-    Ok(SearchResult {
-        candidate,
-        trials: state.trials,
-    })
+    Ok(())
 }
 
 struct SearchState<F> {
@@ -349,6 +406,127 @@ mod tests {
         // With no passing lossy trial, probe the upper endpoint neighborhood.
         for q in 96..=100 {
             assert!(qualities(&result).contains(&q));
+        }
+    }
+
+    fn exhaustive(
+        threshold: f64,
+        evaluate: impl FnMut(Mode) -> Result<Candidate>,
+    ) -> Result<SearchResult> {
+        search_using(
+            threshold,
+            SearchMode::Exhaustive,
+            SearchOptions::default(),
+            evaluate,
+        )
+    }
+
+    #[test]
+    fn exhaustive_finds_every_isolated_feasible_quality_including_endpoints() {
+        for feasible in 0..=100 {
+            let result = exhaustive(80.0, |mode| {
+                let score = if mode == (Mode::Lossy { quality: feasible }) {
+                    80.0
+                } else {
+                    79.999_999_999
+                };
+                Ok(Candidate::synthetic(mode, score, 10))
+            })
+            .unwrap();
+            assert_eq!(result.candidate().mode(), Mode::Lossy { quality: feasible });
+            assert_eq!(result.candidate().score(), 80.0);
+            assert_eq!(qualities(&result), (0..=100).collect::<Vec<_>>());
+            assert_eq!(result.trials().len(), 102);
+            assert_eq!(result.trials().last().unwrap().mode, Mode::Lossless);
+        }
+    }
+
+    #[test]
+    fn exhaustive_selects_by_size_and_stable_ties_across_nonmonotonic_curves() {
+        for lossless in [(100.0, 1), (100.0, 2), (79.0, 1)] {
+            let result = exhaustive(80.0, |mode| {
+                let (score, size) = match mode {
+                    Mode::Lossy { quality: 17 | 23 } => (80.0, 2),
+                    Mode::Lossy { quality: 99 } => (79.0, 1),
+                    Mode::Lossy { quality } => (90.0, 10 + usize::from(quality % 7)),
+                    Mode::Lossless => lossless,
+                };
+                Ok(Candidate::synthetic(mode, score, size))
+            })
+            .unwrap();
+            assert_eq!(result.trials().len(), 102);
+            assert_eq!(
+                result.candidate().mode(),
+                if lossless == (100.0, 1) {
+                    Mode::Lossless
+                } else {
+                    Mode::Lossy { quality: 17 }
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn exhaustive_failure_reports_the_complete_fixed_set_without_heuristic_caveat() {
+        for (threshold, score) in [(100.0, 99.999_999_999), (0.0, -1.0)] {
+            let mut modes = Vec::new();
+            let error = exhaustive(threshold, |mode| {
+                modes.push(mode);
+                Ok(Candidate::synthetic(mode, score, 1))
+            })
+            .unwrap_err();
+            let failure = error.downcast_ref::<ThresholdUnachievable>().unwrap();
+            assert_eq!(failure.search_mode, SearchMode::Exhaustive);
+            assert_eq!(failure.threshold, threshold);
+            assert_eq!(failure.best_score, score);
+            assert_eq!(failure.evaluated_candidates, 102);
+            assert_eq!(modes.len(), 102);
+            for quality in 0..=100 {
+                assert_eq!(modes[usize::from(quality)], Mode::Lossy { quality });
+            }
+            assert_eq!(modes[101], Mode::Lossless);
+            assert!(error
+                .to_string()
+                .contains("all 101 integer lossy qualities and lossless"));
+            assert!(!error.to_string().contains("untested"));
+            assert!(!error.to_string().contains("heuristic"));
+        }
+    }
+
+    #[test]
+    fn exhaustive_aborts_on_evaluation_errors_without_returning_a_partial_winner() {
+        for failed_mode in [
+            Mode::Lossy { quality: 0 },
+            Mode::Lossy { quality: 17 },
+            Mode::Lossy { quality: 100 },
+            Mode::Lossless,
+        ] {
+            let mut modes = Vec::new();
+            let error = exhaustive(80.0, |mode| {
+                modes.push(mode);
+                if mode == failed_mode {
+                    anyhow::bail!("synthetic codec failure");
+                }
+                Ok(Candidate::synthetic(mode, 100.0, 10))
+            })
+            .unwrap_err();
+            assert_eq!(modes.last(), Some(&failed_mode));
+            let expected_calls = match failed_mode {
+                Mode::Lossy { quality } => usize::from(quality) + 1,
+                Mode::Lossless => 102,
+            };
+            assert_eq!(modes.len(), expected_calls);
+            assert!(error.to_string().contains(&format!("{failed_mode:?}")));
+            assert_eq!(error.root_cause().to_string(), "synthetic codec failure");
+            assert!(error.downcast_ref::<ThresholdUnachievable>().is_none());
+        }
+    }
+
+    #[test]
+    fn exhaustive_rejects_invalid_thresholds_before_evaluation() {
+        for threshold in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.1, 100.1] {
+            let error = exhaustive(threshold, |_| panic!("must not evaluate")).unwrap_err();
+            assert!(error.to_string().contains("threshold must be"));
         }
     }
 

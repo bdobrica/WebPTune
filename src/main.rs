@@ -8,7 +8,7 @@ fn main() -> anyhow::Result<()> {
     args.validate_paths()?;
     let reference = input::load_with_resize(&args.input, args.resize())?;
     let evaluator = TrialEvaluator::new(reference.pixels())?;
-    let result = search::search(&evaluator, args.threshold)?;
+    let result = search::search_with_mode(&evaluator, args.threshold, args.search)?;
     if args.verbose {
         for trial in result.trials() {
             eprintln!(

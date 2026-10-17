@@ -1,12 +1,12 @@
 # Implementation Plan — webptune
 
-**Status:** Phases 0–6 implemented; Phase 7 local performance/robustness validated, macOS/Windows checks pending; Phase 8 documentation/CI implemented, hosted validation and tag pending; Phase 9 maximum-dimension resizing implemented · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
+**Status:** Phases 0–6 implemented; Phase 7 local performance/robustness validated, macOS/Windows checks pending; Phase 8 documentation/CI implemented, hosted validation and tag pending; Phase 9 maximum-dimension resizing and exhaustive search implemented · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
 
 ## 1. Purpose and scope
 
 Build `webptune`, a dependable CLI that converts a supported still image to WebP, optionally resizes it, and selects a small valid WebP output whose **decoded pixels** achieve at least a user-defined SSIMULACRA2 score compared with the processed reference image.
 
-The objective is **minimize encoded bytes subject to a measured quality floor**, not merely find the lowest encoder quality. Search is performed in memory; only the chosen output is written. It is a *heuristic optimizer*: v0.1 does not promise a globally minimal WebP across every possible encoder configuration.
+The objective is **minimize encoded bytes subject to a measured quality floor**, not merely find the lowest encoder quality. Search is performed in memory; only the chosen output is written. The default search is heuristic. Optional exhaustive search guarantees the smallest feasible result within its fixed discrete candidate set; neither mode promises a globally minimal WebP across every possible encoder configuration.
 
 ### Goals
 
@@ -14,7 +14,7 @@ The objective is **minimize encoded bytes subject to a measured quality floor**,
 2. Support `--threshold` as a native SSIMULACRA2 score (default `80`, valid `0..=100`).
 3. Support `--scale` (default `1.0`, valid `0 < scale <= 1.0`) with Lanczos3 resizing. Phase 9 adds maximum width/height bounds as alternatives.
 4. Preserve alpha when present, with alpha-aware quality comparisons.
-5. Search lossy quality configurations in memory, then consider lossless WebP.
+5. Search lossy quality configurations in memory, then consider lossless WebP. Phase 9 adds optional exhaustive evaluation of all 101 integer qualities plus lossless.
 6. Select the smallest **tested, feasible** encoded candidate.
 7. Support `-o -` for binary stdout and reliable file output.
 8. Provide useful reporting on stderr without contaminating stdout.
@@ -37,7 +37,7 @@ The score always compares **the encoded-and-decoded candidate against the proces
 
 Encoder quality does not imply a strictly monotonic result in **file size** or SSIM score. Binary search finds a practical neighborhood quickly; it is not a proof. Record the `(mode, quality, size, score, bytes)` of each tested candidate. A candidate is *feasible* only if decoded successfully and its score is at least the threshold. Choose the smallest feasible candidate, with deterministic tie breaks (prefer lossy, then lower quality). Compare with lossless even if a lossy candidate already meets the threshold: lossless is sometimes smaller for icons and simple art.
 
-For v0.1, test integer lossy qualities `0..=100`: quality 0 and 100 are valid libwebp inputs. Search for a feasible region via binary search, then probe a small set around its boundary (e.g. ±4 quality points), plus endpoints. Keep a configurable internal evaluation budget; deduplicate qualities. This does **not** guarantee the smallest feasible quality or global minimum. A future `--search exhaustive` mode can evaluate all 101 qualities.
+Test integer lossy qualities `0..=100`: quality 0 and 100 are valid libwebp inputs. By default, search for a feasible region via binary search, then probe a small set around its boundary (±4 quality points), plus endpoints. Keep a configurable internal heuristic evaluation budget; deduplicate qualities. This does **not** guarantee the smallest feasible quality or global minimum. `--search exhaustive` evaluates all 101 integer qualities plus lossless, guaranteeing the smallest feasible output within this fixed set at the current encoder settings. See section 22.
 
 ### 2.3 Lossless and alpha handling
 
@@ -68,7 +68,7 @@ webptune/
 │   ├── input.rs             # decode, limits, resize, RGBA/RGB
 │   ├── metric.rs            # reusable reference and scoring
 │   ├── encoder.rs           # lossy/lossless WebP candidates
-│   ├── search.rs            # bounded search and selection
+│   ├── search.rs            # heuristic/exhaustive search and selection
 │   ├── output.rs            # stdout/file and atomic write
 │   └── lib.rs               # testable orchestration/API
 ├── tests/
@@ -90,11 +90,13 @@ struct Options {
     scale: f64,
     scale_width: Option<u32>,
     scale_height: Option<u32>,
+    search: SearchMode,
     verbose: bool,
 }
 
 enum OutputTarget { Stdout, File(PathBuf) }
 enum Mode { Lossy { quality: u8 }, Lossless }
+enum SearchMode { Heuristic, Exhaustive }
 
 struct Candidate {
     mode: Mode,
@@ -122,6 +124,7 @@ webptune \
   --output OUTPUT|- \
   [--threshold 80] \
   [--scale 1.0 | --scale-width PIXELS [--scale-height PIXELS] | --scale-height PIXELS] \
+  [--search heuristic|exhaustive] \
   [--verbose]
 ```
 
@@ -130,6 +133,7 @@ Short flags: `-i`, `-o`, `-t`, `-s`, `-v`. Input and output are required for v0.
 Validation:
 
 - `threshold`: finite numeric value `0..=100`; reject NaN, infinities, and out-of-range values.
+- `search`: `heuristic` (default) or `exhaustive`; reject unknown or missing modes. Exhaustive mode evaluates all 102 fixed candidates before selecting, unless an evaluation fails.
 - `scale`: finite numeric value `(0,1]`; reject zero, negative, >1, NaN, infinity.
 - `scale-width`/`scale-height`: positive `u32` maximum dimensions; either or both may be supplied. Reject combination with an explicit `--scale`, including `-s 1`. Fit to the tightest bound without upscaling, preserving aspect ratio with nearest-pixel rounding (minimum one pixel per axis). See section 21 for implementation details.
 - `input`: exists, readable, supported format, valid decoded dimensions.
@@ -207,6 +211,10 @@ Avoid calling `webp::Encoder::encode` or `encode_lossless` directly when their i
 
 ### Phase D — Search and fallback
 
+For `--search exhaustive`, replace steps 13–15 with one evaluation of every
+integer lossy quality in ascending order, 0 through 100. Use the same evaluator,
+reference cache, feasibility check and size/tie ordering in both modes.
+
 13. Always test lossy endpoints `0` and `100` (or test 100 before midpoint searches to bracket feasibility). Do not presume score monotonicity.
 14. Run bounded integer binary search as a heuristic for the quality boundary. Keep every feasible evaluated candidate, independent of its position in the sequence.
 15. Evaluate adjacent qualities within a limited ±4 window, and compare results by actual encoded bytes; optionally probe evenly spaced qualities if the metric is clearly nonmonotonic.
@@ -282,7 +290,7 @@ Measure total wall time, peak RSS, number of trial encodes, encoding time, decod
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| Nonmonotonic quality/size | Binary search skips superior candidates | Treat search as heuristic, local probes, smallest tested bytes, optional future exhaustive mode |
+| Nonmonotonic quality/size | Binary search skips superior candidates | Heuristic local probes and smallest tested bytes; optional exhaustive mode covers the fixed discrete set |
 | Transparent-pixel differences | Lossless fallback doesn't satisfy score | Alpha-aware metric, decoded lossless validation, clear error |
 | Color profile / orientation loss | Visual discrepancy vs viewer | Scope SDR 8-bit, document behavior, add dedicated support later |
 | Excessive allocations | Out-of-memory crash | Header limits, checked arithmetic, bounded buffers and workloads |
@@ -293,7 +301,7 @@ Measure total wall time, peak RSS, number of trial encodes, encoding time, decod
 
 ## 10. Post-v0.1 roadmap (optional)
 
-1. `--search fast|thorough|exhaustive`; quality/timing tradeoff with explicit global minimum across the *fixed discrete candidate set* for exhaustive search.
+1. `--search heuristic|exhaustive` is implemented (section 22), with a minimum across the *fixed discrete candidate set* for exhaustive search. Additional intermediate search strategies remain optional future work.
 2. `--max-bytes`, `--skip-if-larger`, quiet/JSON reports, and stdin input.
 3. Batch processing and parallel files, with explicit memory/concurrency caps.
 4. Preserve ICC/EXIF orientation and add color-managed / 16-bit paths.
@@ -576,8 +584,9 @@ search. Binary decisions only choose where to look next; they do not prove
 anything about untested qualities or sizes. A test explicitly demonstrates a
 feasible quality outside the probes being missed. If no tested trial passes,
 the typed `ThresholdUnachievable` error includes threshold, best measured score
-and trial count, and states that untested feasible qualities may exist. Invalid
-thresholds or budgets fail before evaluation. Encoder/decoder/metric errors
+and trial count, and states that untested feasible qualities may exist for the
+heuristic. Phase 9 adds a mode field and a complete-set exhaustive failure message
+(section 22). Invalid thresholds or budgets fail before evaluation. Encoder/decoder/metric errors
 abort with mode context and their original cause, rather than becoming failed
 quality scores; an earlier evaluation error also aborts before later trials.
 
@@ -868,3 +877,54 @@ locked/offline release build for the binary and smoke checker. The independent
 release smoke checks passed. An additional release CLI check fitted the RGBA
 fixture from 17×11 to 8×5 within 9×5 bounds at threshold 100, producing identical
 106-byte WebP payloads through file and stdout output.
+
+## 22. Phase 9 — Exhaustive quality search
+
+The second deferred enhancement adds `--search heuristic|exhaustive`. The default
+remains the existing heuristic, including its order, deduplication, 18-lossy
+budget and measured lossless comparison. Explicit `--search heuristic` selects
+the same behavior. Unknown modes and a missing value fail argument parsing
+before image loading or output writes.
+
+`SearchMode::Exhaustive` evaluates lossy qualities 0 through 100 in ascending
+order, followed by lossless, exactly once each: 102 measured trials for a
+completed search. It does not stop after a feasible trial or apply the heuristic
+budget. Both modes reuse one `TrialEvaluator` and its cached metric reference,
+the exact `score >= threshold` check, and byte-size ordering with ties preferring
+lossy then lower quality. Only the current best bytes and numeric trial summaries
+are retained. Verbose diagnostics enumerate actual trials on stderr; normal
+reports include the actual trial count, and stdout contains only WebP bytes.
+
+Exhaustive search guarantees the smallest feasible output **within the 101
+integer lossy qualities and lossless at the current encoder settings**, scored
+against the same processed reference. It does not sweep fractional qualities,
+encoder effort, alpha settings or other WebP configurations. It performs more
+work than the bounded heuristic. All 102 candidates must be successfully
+evaluated for this guarantee: any encode/decode/score error aborts the operation
+without returning a partial winner or writing output. If the entire set is
+infeasible, `ThresholdUnachievable` reports 102 evaluations and the complete-set
+scope, without the heuristic's warning about untested qualities.
+
+The library exposes `search_with_mode(evaluator, threshold, SearchMode)`.
+Existing `search` and `search_with_options` remain heuristic APIs; increasing
+`SearchOptions::max_lossy_trials` still does not enable exhaustive evaluation.
+The benchmark harness continues measuring its original default heuristic.
+
+Synthetic tests exercise every isolated feasible quality (including both
+endpoints), inclusive thresholds, nonmonotonic scores and sizes, stable ties,
+lossless winning, infeasible full sets, invalid thresholds and immediate error
+propagation even after earlier feasible candidates. Real-image coverage builds
+an oracle by directly enumerating and independently decoding/scoring all 102
+candidates for RGB, resized RGBA, tiny RGB/RGBA and fully transparent references.
+At thresholds 0/80/100, exhaustive selections match that oracle's bytes and
+ordering. Twelve RGB/RGBA CLI conversions verify file replacement and stdout,
+including dimension bounds, complete verbose history, alpha/dimensions, score,
+source preservation and staging cleanup. Explicit heuristic CLI output is also
+checked against the existing default library selection. Invalid modes preserve
+the source and existing destination.
+
+Local Linux validation (Rust 1.89.0): formatting, Clippy with denied warnings,
+all 92 tests, locked/offline release build and independent release smoke checks
+passed. Actual release exhaustive file/stdout conversions also passed with
+102 reported trials and identical payloads. CI's existing all-target tests
+include the new coverage; native hosted macOS/Windows execution remains pending.

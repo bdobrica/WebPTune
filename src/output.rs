@@ -105,6 +105,7 @@ mod tests {
             scale: 1.0,
             scale_width: None,
             scale_height: None,
+            search: crate::search::SearchMode::Heuristic,
             verbose: false,
         };
         (directory, args)

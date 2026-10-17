@@ -8,7 +8,7 @@ use tempfile::tempdir;
 use webptune::encoder::{Mode, TrialEvaluator};
 use webptune::input::{self, Pixels};
 use webptune::metric::MetricReference;
-use webptune::search::{self, SearchOptions};
+use webptune::search::{self, SearchMode, SearchOptions};
 
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -325,6 +325,7 @@ fn evaluator_preserves_source_and_cli_writes_selected_bytes_and_verbose_trials()
             .arg("-o")
             .arg(destination)
             .args(["-s", "0.5", "-t", "100", "-v"])
+            .args(["--search", "heuristic"])
             .output()
             .unwrap();
         assert!(result.status.success());
@@ -427,6 +428,136 @@ fn search_returns_the_smallest_tested_feasible_bytes_with_independent_score() {
             }
             assert_eq!(prepared.pixels().as_bytes(), before);
         }
+    }
+}
+
+#[test]
+fn exhaustive_search_matches_full_candidate_oracle_and_file_stdout_outputs() {
+    for (name, sizing, scale) in [
+        ("rgb.png", vec!["-s", "1"], 1.0),
+        (
+            "rgba.png",
+            vec!["--scale-width", "9", "--scale-height", "5"],
+            5.0 / 11.0,
+        ),
+        ("tiny-rgb.png", vec!["-s", "0.5"], 0.5),
+        ("tiny-rgba.png", vec!["-s", "1"], 1.0),
+        ("transparent.png", vec!["-s", "0.5"], 0.5),
+    ] {
+        let directory = tempdir().unwrap();
+        let input = directory.path().join("input.png");
+        let output = directory.path().join("output.webp");
+        let original = fs::read(fixture(name)).unwrap();
+        fs::write(&input, &original).unwrap();
+        // Use the existing multiplier API as the reference, including for bounds.
+        let prepared = input::load(&input, scale).unwrap();
+        let before = prepared.pixels().as_bytes().to_vec();
+        let evaluator = TrialEvaluator::new(prepared.pixels()).unwrap();
+        // Deliberately enumerate the fixed set outside the search implementation
+        // and independently decode/score every member before choosing an oracle.
+        let candidates: Vec<_> = (0..=100)
+            .map(|quality| Mode::Lossy { quality })
+            .chain([Mode::Lossless])
+            .map(|mode| {
+                let candidate = evaluator.evaluate(mode).unwrap();
+                assert_eq!(
+                    candidate.score(),
+                    independent_score(prepared.pixels(), candidate.bytes()),
+                    "{name}: {mode:?}"
+                );
+                candidate
+            })
+            .collect();
+        for threshold in [0.0, 80.0, 100.0] {
+            let expected = candidates
+                .iter()
+                .filter(|candidate| candidate.score() >= threshold)
+                .min_by_key(|candidate| {
+                    let rank = match candidate.mode() {
+                        Mode::Lossy { quality } => quality,
+                        Mode::Lossless => 101,
+                    };
+                    (candidate.size(), rank)
+                })
+                .unwrap();
+            let result =
+                search::search_with_mode(&evaluator, threshold, SearchMode::Exhaustive).unwrap();
+            assert_eq!(result.trials().len(), 102);
+            for (trial, actual) in result.trials().iter().zip(&candidates) {
+                assert_eq!(trial.mode, actual.mode());
+                assert_eq!(trial.score, actual.score());
+                assert_eq!(trial.size, actual.size());
+            }
+            assert_eq!(result.candidate().mode(), expected.mode());
+            assert_eq!(result.candidate().bytes(), expected.bytes());
+            // Exercise the actual CLI on RGB and resized RGBA for each target.
+            if name == "rgb.png" || name == "rgba.png" {
+                for destination in [output.as_os_str(), std::ffi::OsStr::new("-")] {
+                    fs::write(&output, b"existing destination").unwrap();
+                    let cli = Command::new(env!("CARGO_BIN_EXE_webptune"))
+                        .arg("-i")
+                        .arg(&input)
+                        .arg("-o")
+                        .arg(destination)
+                        .args(&sizing)
+                        .args(["--search", "exhaustive", "-t", &threshold.to_string(), "-v"])
+                        .output()
+                        .unwrap();
+                    let stderr = String::from_utf8(cli.stderr).unwrap();
+                    assert!(cli.status.success(), "{name}, {threshold}: {stderr}");
+                    let bytes = if destination == std::ffi::OsStr::new("-") {
+                        assert_eq!(fs::read(&output).unwrap(), b"existing destination");
+                        cli.stdout
+                    } else {
+                        assert!(cli.stdout.is_empty());
+                        fs::read(&output).unwrap()
+                    };
+                    assert_eq!(bytes, expected.bytes());
+                    assert!(independent_score(prepared.pixels(), &bytes) >= threshold);
+                    let decoded = image::load_from_memory_with_format(&bytes, ImageFormat::WebP)
+                        .unwrap()
+                        .to_rgba8();
+                    assert_eq!(
+                        (decoded.width(), decoded.height()),
+                        prepared.pixels().dimensions()
+                    );
+                    assert_eq!(
+                        decoded.pixels().map(|pixel| pixel[3]).collect::<Vec<_>>(),
+                        if prepared.pixels().has_alpha() {
+                            prepared
+                                .pixels()
+                                .as_bytes()
+                                .chunks_exact(4)
+                                .map(|pixel| pixel[3])
+                                .collect()
+                        } else {
+                            vec![255; decoded.len() / 4]
+                        }
+                    );
+                    assert!(stderr.contains("102 measured trials"), "{stderr}");
+                    let lines: Vec<_> = stderr
+                        .lines()
+                        .filter(|line| line.starts_with("Trial "))
+                        .collect();
+                    assert_eq!(lines.len(), 102);
+                    for (line, candidate) in lines.iter().zip(&candidates) {
+                        assert_eq!(
+                            *line,
+                            format!(
+                                "Trial {:?}: {} bytes, decoded SSIMULACRA2 score {:.6}",
+                                candidate.mode(),
+                                candidate.size(),
+                                candidate.score()
+                            )
+                        );
+                    }
+                    assert_eq!(fs::read(&input).unwrap(), original);
+                    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 2);
+                }
+            }
+        }
+        assert_eq!(prepared.pixels().as_bytes(), before);
+        assert_eq!(fs::read(&input).unwrap(), original);
     }
 }
 

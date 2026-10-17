@@ -106,6 +106,7 @@ webptune --input INPUT --output OUTPUT [OPTIONS]
 | `-s, --scale <FACTOR>` | Output width/height multiplier (`0 < scale <= 1`) | `1.0` |
 | `--scale-width <PIXELS>` | Maximum output width, preserving aspect ratio; alternative to `--scale` | Unbounded |
 | `--scale-height <PIXELS>` | Maximum output height, preserving aspect ratio; alternative to `--scale` | Unbounded |
+| `--search <MODE>` | `heuristic` (bounded search) or `exhaustive` (all 102 fixed candidates) | `heuristic` |
 | `-v, --verbose` | Detailed progress and trial diagnostics on stderr | Off |
 | `-h, --help` | Print help | — |
 | `-V, --version` | Print version | — |
@@ -126,6 +127,12 @@ Example: scale an image to half its width and height before encoding:
 
 ```bash
 webptune -i large.png -o small.webp --scale 0.5 --threshold 85
+```
+
+Example: evaluate every integer lossy quality and lossless:
+
+```bash
+webptune -i photo.png -o photo.webp --search exhaustive --threshold 90
 ```
 
 Example: fit within 1920×1080, preserving aspect ratio without cropping or stretching:
@@ -170,17 +177,28 @@ The native SSIMULACRA2 scale is **not a percentage** and may yield negative scor
 
 The optimization may choose lossless because it yields a smaller file (especially for low-complexity graphics) or because no tested lossy setting meets the requested quality.
 
-The current search tests lossy quality 0 and 100, runs up to seven integer binary
-steps, and probes ±4 around the estimated boundary. Duplicate qualities are
+The default `--search heuristic` tests lossy quality 0 and 100, runs up to seven
+integer binary steps, and probes ±4 around the estimated boundary. Duplicate qualities are
 cached. The default limit is 18 lossy evaluations plus one measured lossless
-evaluation. Selection compares actual byte counts; equal sizes prefer lossy,
-then lower quality. Only the best candidate's bytes and numeric trial summaries
-are retained. An error means no **tested** candidate met the threshold, rather
-than proving all untested qualities infeasible.
+evaluation. It can miss feasible qualities or a smaller output outside its probes.
+
+`--search exhaustive` evaluates every integer lossy quality from 0 through 100,
+then lossless, for exactly 102 trials on a completed search. It guarantees the
+smallest feasible output **within this fixed candidate set**, using the current
+encoder settings and processed reference. Fractional qualities and other WebP
+configurations are outside that guarantee. It performs more work than the
+default heuristic; it does not stop early when a candidate passes.
+
+Both modes compare actual byte counts; equal sizes prefer lossy, then lower
+quality. Only the best candidate's bytes and numeric trial summaries are
+retained. If no tested candidate meets the threshold, the command fails without
+writing output. Exhaustive failure covers the complete fixed set; heuristic
+failure leaves untested qualities unresolved. Encoding, decoding or scoring
+errors abort either mode, without returning a partial winner.
 
 ## Behavior and limitations
 
-- **Not globally optimal:** WebP quality, SSIM scores, and output byte sizes are not strictly monotonic. The bounded binary-search heuristic plus nearby probes finds a useful candidate, but can miss a smaller feasible one.
+- **Optimization scope:** WebP quality, SSIM scores, and output byte sizes are not strictly monotonic. The default heuristic can miss a smaller feasible candidate. Exhaustive mode guarantees the smallest feasible result only among the 101 integer lossy qualities and lossless with the current encoder settings, rather than across all possible WebP configurations.
 - **Threshold cannot always be guaranteed:** even the native lossless path is decoded and scored. Alpha normalization and other conversion subtleties can affect the comparison. If nothing satisfies the threshold, the command fails rather than silently lowering the target.
 - **Still images only:** input format is detected from contents, regardless of extension. Animated PNG (APNG) and WebP are rejected before decoding pixels. GIF and other formats are unsupported. JPEG/BMP decoders expose no animation detection; JPEG multi-picture extensions and concatenated images are not enumerated or guaranteed to be rejected.
 - **Initial color scope:** decoded samples are treated as SDR sRGB-like values. ICC/profile transforms and linear-light resizing are not implemented. Supported 16-bit PNGs are reduced to 8 bits after resizing, losing precision; HDR fidelity is unsupported.
@@ -231,8 +249,13 @@ validation and decode errors. Trial scores are verified through an independent
 decode and one-shot metric path. Search tests cover nonmonotonic scores/sizes,
 exact thresholds, lossless comparison, deduplication, budgets, ties and errors;
 real-image selections are checked against every tested feasible candidate and
-independently scored. Output tests compare file/stdout payloads with selected
-bytes, independently decode/score written images, check stderr summaries and
+independently scored. Exhaustive tests include every isolated feasible quality,
+nonmonotonic sizes/scores, ties, complete-set failure and evaluation errors. A
+full-set oracle independently decodes/scores all 102 candidates for RGB, RGBA,
+tiny and transparent inputs, checking selections at thresholds 0/80/100 and
+12 RGB/RGBA CLI conversions through file/stdout, including dimension bounds.
+Output tests compare file/stdout payloads with selected bytes, independently
+decode/score written images, check stderr summaries and
 verbose history, and cover staged replacement, cleanup, late collisions, partial
 writes, injected disk-full/flush errors and a real broken stdout connection.
 The suite also retains the Phase 0 API tests.
