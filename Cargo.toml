@@ -16,6 +16,7 @@ same-file = "1"
 webp = { version = "0.3", default-features = false }
 
 [dev-dependencies]
+png = "0.18"
 tempfile = "3"
 
 [[example]]

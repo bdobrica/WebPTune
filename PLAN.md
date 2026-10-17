@@ -1,6 +1,6 @@
 # Implementation Plan — WebP SSIM Optimizer
 
-**Status:** Phases 0–1 implemented; phases 2–8 planned · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
+**Status:** Phases 0–2 implemented; phases 3–8 planned · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
 
 ## 1. Purpose and scope
 
@@ -160,6 +160,7 @@ fast-ssim2 = "0.9"
 anyhow = "1"
 
 [dev-dependencies]
+png = "0.18"
 tempfile = "3"
 ```
 
@@ -167,6 +168,7 @@ Phase 0 uses `anyhow` for prototype and CLI errors; typed library errors can be 
 
 Phase 1 adds `same-file` for portable file-identity checks (including hard links)
 and `tempfile` for isolated filesystem integration tests.
+Phase 2 uses `png` as a development dependency to generate real APNG fixtures.
 
 API checkpoints:
 
@@ -418,3 +420,72 @@ Valid requests intentionally fail until Phases 2–5 supply the image pipeline.
 Integration tests prove no output is created and existing files are preserved
 for validation failures and pending-pipeline requests. Unix symlink/non-UTF-8
 cases are conditional tests; macOS/Windows execution remains a Phase 7 task.
+
+## 14. Phase 2 image preparation decisions
+
+`input::load(path, scale)` now returns an owned `PreparedImage`, preserving source
+dimensions alongside typed packed `Pixels::Rgb` or `Pixels::Rgba` reference data.
+The CLI invokes it after path validation. It then reports prepared dimensions and
+layout in a pending-optimization error; phases 3–5 still supply scoring, search
+and output. No destination is created or opened for writing during preparation.
+
+### Decode and validation
+
+Format detection uses file contents, with no extension fallback. JPEG, PNG,
+WebP and BMP have explicit decoder branches. PNG's `is_apng` and WebP's
+`has_animation` reject animation before pixel decode. The corpus includes real
+two-frame APNG/WebP files, and tests independently enumerate both frames. GIF and
+other formats are rejected. JPEG/BMP have no animation API in these decoders;
+multi-picture JPEG extensions and concatenated rasters are not enumerated, so
+their rejection is not guaranteed.
+
+Header dimensions are checked against the source cap, rounded output codec
+limits and combined memory budget before `DynamicImage::from_decoder` allocates
+pixels. Checked buffer sizes are compared with the decoder's advertised byte
+count. PNG receives allocation/dimension limits at construction, and all decoders
+receive limits before pixel decode. Header and pixel errors propagate with
+context. These are decoder-based checks, not exhaustive container validation:
+permissive decoders may accept recoverable corruption or trailing bytes. Header
+parsing/metadata can allocate before application dimension checks; notably the
+JPEG decoder reads compressed input into memory in its constructor. Decoder
+allocation limits are best effort and do not impose a process memory cap.
+
+### Scale, alpha and color
+
+Each axis uses `max(1, round(dimension * scale))`, computed in `f64` with checked
+conversion to `u32`. This gives 17x11 -> 9x6 at scale 0.5, accepts arbitrarily
+small positive representable scales and never produces a zero axis. Codec limits
+apply after scaling; the 20000x1 PNG fixture can be downscaled to 10000x1.
+
+Lanczos3 runs at most once using exact rounded dimensions. Scale 1 and scales
+whose rounding leaves dimensions unchanged bypass it. Alpha-bearing buffers are
+converted to float RGBA and premultiplied before filtering, then unpremultiplied
+back to straight alpha. RGB hidden under alpha=0 therefore cannot tint visible
+edges. Filtering uses existing sRGB-like samples, not a linear-light transform.
+After resizing, normalization produces 8-bit RGB for fully opaque processed
+pixels and 8-bit RGBA when any processed alpha is below 255. Grayscale expands
+to RGB/RGBA; 16-bit PNG is reduced to 8 bits. Without resizing, 8-bit RGBA retains
+hidden colors. Resizing may normalize invisible colors.
+
+ICC profiles, EXIF orientation and metadata are not applied or preserved.
+The EXIF orientation-6 fixture proves stored raster orientation is retained.
+There is no color-managed, wide-gamut, HDR or 16-bit-fidelity pathway in v0.1.
+
+### Resize memory refinement and fixtures
+
+`validate_resize_dimensions` extends section 13's base estimate whenever
+dimensions change. It adds `16 * source_width * output_height` for the image
+crate's float intermediate, `8 * max(source_width, source_height)` for coefficient
+vectors including growth, and `16 * source_pixels` when alpha needs a float
+source. All large buffer arithmetic is checked before decoding. This closes the
+case where a very wide source has a small output but a large intermediate; some
+images passing the base guard now require a smaller source or scale. The 1 GiB
+budget remains an initial conservative estimate pending Phase 7 measurements.
+
+`examples/generate_fixtures.rs` reproducibly creates the committed synthetic
+corpus. `tests/fixtures/README.md` records provenance and regeneration. Fixtures
+cover supported still formats, transparency/opaque alpha, tiny images, grayscale,
+16-bit RGBA, animated inputs, orientation, corrupt/unsupported input and oversized
+headers. Header-only BMP tests demonstrate limits fail before absent pixels are
+read. Tests cover source/destination preservation and empty stdout at the CLI
+boundary. Cross-platform execution remains Phase 7 work.

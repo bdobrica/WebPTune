@@ -1,6 +1,6 @@
 # WebP SSIM Optimizer
 
-**Status: Phases 0–1 implemented (API prototype, CLI parsing and validation); image conversion is still pending.** Implementation is tracked in [TODO.md](TODO.md) and designed in [PLAN.md](PLAN.md). The flags below work for validation; conversion examples will produce images after the processing and output phases are implemented.
+**Status: Phases 0–2 implemented (API prototype, CLI validation, decoding and resizing); WebP optimization and output are still pending.** Implementation is tracked in [TODO.md](TODO.md) and designed in [PLAN.md](PLAN.md). The flags below load and prepare a reference image; conversion examples will produce images after phases 3–5 are implemented.
 
 To validate the current prototype (it generates synthetic images in memory):
 
@@ -10,7 +10,7 @@ cargo run --locked --example api_spike
 cargo test --all-targets --locked
 ```
 
-`rust-toolchain.toml` selects Rust 1.89.0 with rustfmt and Clippy. A C compiler and archiver are required: `libwebp-sys` builds its bundled libwebp sources. `cargo run -- --help` and `--version` work. Input and output flags are required; valid arguments and paths currently report that conversion is pending and exit nonzero without writing output. See [Phase 0 findings](PLAN.md#12-phase-0-api-validation-findings) for codec APIs and [Phase 1 decisions](PLAN.md#13-phase-1-cli-and-validation-decisions) for validation details.
+`rust-toolchain.toml` selects Rust 1.89.0 with rustfmt and Clippy. A C compiler and archiver are required: `libwebp-sys` builds its bundled libwebp sources. `cargo run -- --help` and `--version` work. Input and output flags are required; supported still images are decoded, optionally resized, and normalized. The command then reports prepared dimensions and RGB8/RGBA8 layout on stderr and exits nonzero without writing output while optimization is pending. See [Phase 2 decisions](PLAN.md#14-phase-2-image-preparation-decisions) for input behavior and safeguards.
 
 Convert a supported still image into a compact WebP file while enforcing a minimum **SSIMULACRA2** perceptual similarity score. Rather than choosing a fixed WebP encoder quality in advance, the tool encodes candidates in memory, decodes and scores them, and writes the smallest **tested** output that meets your requested quality floor.
 
@@ -109,13 +109,14 @@ The optimization may choose lossless because it yields a smaller file (especiall
 
 - **Not globally optimal:** WebP quality, SSIM scores, and output byte sizes are not strictly monotonic. The bounded binary-search heuristic plus nearby probes finds a useful candidate, but can miss a smaller feasible one.
 - **Threshold cannot always be guaranteed:** even the native lossless path is decoded and scored. Alpha normalization and other conversion subtleties can affect the comparison. If nothing satisfies the threshold, the command fails rather than silently lowering the target.
-- **Still images only:** animated inputs are not a supported workflow in v0.1.
-- **Initial color scope:** 8-bit SDR sRGB-like decoded pixels; ICC color management, HDR, 16-bit precision, and metadata preservation are out of scope.
-- **EXIF orientation:** automatic application is not guaranteed in v0.1; pre-orient images when orientation matters.
+- **Still images only:** input format is detected from contents, regardless of extension. Animated PNG (APNG) and WebP are rejected before decoding pixels. GIF and other formats are unsupported. JPEG/BMP decoders expose no animation detection; JPEG multi-picture extensions and concatenated images are not enumerated or guaranteed to be rejected.
+- **Initial color scope:** decoded samples are treated as SDR sRGB-like values. ICC/profile transforms and linear-light resizing are not implemented. Supported 16-bit PNGs are reduced to 8 bits after resizing, losing precision; HDR fidelity is unsupported.
+- **EXIF orientation:** orientation is deliberately not applied. Pre-orient images when orientation matters; stored raster dimensions determine scaling.
 - **Image metadata:** EXIF, XMP and ICC profiles are not promised to carry over into the WebP output.
-- **Resizing:** ratios above 1 are rejected; resulting dimensions are at least 1×1.
-- **Source safety:** overwrite of the input path is refused. File destinations are written safely through a temporary file when possible.
-- **Safety limits established in Phase 1:** 100 million source pixels, 16,383 pixels per output axis, and a 1 GiB estimated working-memory budget including metric padding. This conservative estimate permits 2000×2000 at full scale, while 2048×2048 requires downscaling. These reusable guards will be applied to image headers and processing in Phase 2; they are not a measured peak-memory guarantee.
+- **Resizing:** each axis uses `max(1, round(dimension * scale))`. Lanczos3 runs once when dimensions change and is bypassed at scale 1 or when rounding keeps the same size. Alpha is premultiplied during filtering and returned as straight alpha; hidden RGB does not tint visible edges. Fully opaque processed images use RGB8; others use RGBA8.
+- **Source safety:** overwrite of the input path is refused. The current pipeline creates no output. Safe file replacement will be implemented in Phase 5.
+- **Safety limits:** headers are checked before pixel decoding: 100 million source pixels, 16,383 pixels per output axis after scaling, and a 1 GiB estimated working-memory budget including metric padding and resize buffers. This conservative estimate permits 2000×2000 at full scale, while 2048×2048 requires downscaling. Decoder limits are configured, but they are best effort. Headers/metadata can allocate earlier (the JPEG decoder buffers compressed input), and the estimate is not a measured peak-memory guarantee.
+- **Corrupt input:** header/pixel decoder errors propagate as failures. Detection follows the underlying decoders; it is not an exhaustive container-integrity check, and permissive decoders can accept recoverable damage or trailing data.
 
 ## Exit behavior
 
@@ -124,8 +125,8 @@ verifying the decoded output against the requested score. Unsupported or
 malformed images, encoding/decoding failures, impossible thresholds and output
 errors will exit nonzero with details on stderr.
 
-Currently, help/version exit `0`, invalid arguments exit `2`, and path errors or
-the pending-conversion diagnostic exit `1`. Parsing and path checks preserve the
+Currently, help/version exit `0`, invalid arguments exit `2`, and path/input errors or
+the pending-optimization diagnostic exit `1`. Validation and image preparation preserve the
 input and any existing destination, including rejecting canonical-path, symlink
 and hard-link collisions. Missing output paths require an existing parent
 directory. Input `-` is unsupported; output `-` selects stdout.
@@ -139,12 +140,18 @@ cargo test --all-targets
 cargo build --release --locked
 ```
 
-The current suite includes nine argument/limit unit tests, ten CLI process tests,
-and five API spike tests on Linux. It covers numeric boundaries, defaults, help,
-required flags, native paths, collisions, file preservation, empty stdout on
-failure, checked dimension arithmetic, memory policy, RGB/RGBA round trips,
-transparency and animation detection APIs. Image ingestion, resizing and full
-optimizer behavior remain for later phases.
+The suite covers argument and allocation limits, CLI process behavior, all four
+input formats, rounded/tiny resizing, RGB/RGBA normalization, grayscale/16-bit
+conversion, transparent edges, animation rejection, corrupt/oversized inputs,
+EXIF behavior, source preservation and empty stdout on failure. It also retains
+the Phase 0 codec/metric API tests. Optimization and output remain for phases 3–5.
+
+The synthetic fixtures are committed under `tests/fixtures`, with provenance in
+[their README](tests/fixtures/README.md). Regenerate them with:
+
+```bash
+cargo run --locked --example generate_fixtures
+```
 
 See [PLAN.md](PLAN.md) for architecture, edge cases, algorithm decisions, release gates and deferred features. See [TODO.md](TODO.md) for the task-by-task checklist.
 

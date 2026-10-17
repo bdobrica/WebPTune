@@ -614,6 +614,7 @@ dependencies = [
  "clap",
  "fast-ssim2",
  "image",
+ "png",
  "same-file",
  "tempfile",
  "webp",

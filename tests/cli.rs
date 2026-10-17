@@ -4,7 +4,7 @@ use std::process::{Command, Output};
 
 use tempfile::{tempdir, TempDir};
 
-const SOURCE: &[u8] = b"source is never modified or decoded in Phase 1";
+const SOURCE: &[u8] = include_bytes!("fixtures/rgb.png");
 const DESTINATION: &[u8] = b"existing destination must survive validation";
 
 struct Fixture {
@@ -110,7 +110,7 @@ fn valid_arguments_reach_pending_pipeline_without_output() {
     ] {
         assert_failure(
             &fixture.run(&fixture.output, &extra),
-            "CLI validation passed",
+            "Image preparation passed",
         );
         assert!(!fixture.output.exists());
     }
@@ -122,9 +122,12 @@ fn valid_arguments_reach_pending_pipeline_without_output() {
         .arg(&fixture.output)
         .output()
         .unwrap();
-    assert_failure(&output, "CLI validation passed");
+    assert_failure(&output, "Image preparation passed");
     fs::write(&fixture.output, DESTINATION).unwrap();
-    assert_failure(&fixture.run(&fixture.output, &[]), "CLI validation passed");
+    assert_failure(
+        &fixture.run(&fixture.output, &[]),
+        "Image preparation passed",
+    );
     assert_eq!(fs::read(&fixture.output).unwrap(), DESTINATION);
     fixture.source_unchanged();
 }
@@ -253,7 +256,10 @@ fn invalid_output_directory_does_not_create_anything() {
 #[test]
 fn stdout_target_has_no_text_payload_on_failure() {
     let fixture = Fixture::new();
-    assert_failure(&fixture.run(Path::new("-"), &[]), "CLI validation passed");
+    assert_failure(
+        &fixture.run(Path::new("-"), &[]),
+        "Image preparation passed",
+    );
     assert_failure(&fixture.run(Path::new("-"), &["-s", "0"]), "scale must");
     assert!(!fixture.dir.path().join("-").exists());
     fixture.source_unchanged();
@@ -265,7 +271,7 @@ fn stdout_target_has_no_text_payload_on_failure() {
         .args(["-i", "./-", "-o", "./destination.webp"])
         .output()
         .unwrap();
-    assert_failure(&output, "CLI validation passed");
+    assert_failure(&output, "Image preparation passed");
     assert_eq!(fs::read(fixture.dir.path().join("-")).unwrap(), SOURCE);
     assert!(!fixture.output.exists());
 }

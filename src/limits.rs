@@ -28,6 +28,24 @@ fn pixel_count(width: u32, height: u32) -> Result<u64> {
         .context("image pixel count overflow")
 }
 
+/// Apply the CLI scale contract with positive half values rounded upward.
+///
+/// Conversion to `u32` happens only after checking the floating-point result.
+/// Codec and allocation limits apply separately to the resulting dimensions.
+pub fn scaled_dimensions(source: (u32, u32), scale: f64) -> Result<(u32, u32)> {
+    pixel_count(source.0, source.1)?;
+    ensure!(
+        scale.is_finite() && 0.0 < scale && scale <= 1.0,
+        "scale must be a finite number in (0, 1]"
+    );
+    let dimension = |value| -> Result<u32> {
+        let rounded = (f64::from(value) * scale).round().max(1.0);
+        ensure!(rounded <= f64::from(u32::MAX), "scaled dimension overflow");
+        Ok(rounded as u32)
+    };
+    Ok((dimension(source.0)?, dimension(source.1)?))
+}
+
 /// Calculate a packed row stride without truncating on 32-bit targets.
 pub fn checked_row_stride(width: u32, bytes_per_pixel: usize) -> Result<usize> {
     ensure!(
@@ -97,7 +115,7 @@ fn estimated_processing_bytes(source: (u32, u32), output: (u32, u32)) -> Result<
 /// Validate prospective output dimensions before resize/metric/codec allocation.
 ///
 /// The estimate includes the original decode and metric padding, so downscaling
-/// cannot bypass the source budget. Phase 2 will call this after rounding scale.
+/// cannot bypass the source budget.
 pub fn validate_processing_dimensions(source: (u32, u32), output: (u32, u32)) -> Result<()> {
     validate_source_dimensions(source.0, source.1)?;
     pixel_count(output.0, output.1)?;
@@ -108,9 +126,69 @@ pub fn validate_processing_dimensions(source: (u32, u32), output: (u32, u32)) ->
     Ok(())
 }
 
+/// Include the actual Lanczos intermediate and alpha premultiplication buffers.
+///
+/// The image crate samples vertically into a four-channel float buffer first.
+/// Alpha resizing also needs a float source to avoid bleeding hidden RGB into
+/// visible pixels. Coefficient vectors reserve up to eight bytes per source axis
+/// element (including Vec growth). Output buffers fit the processing allowance.
+pub fn validate_resize_dimensions(
+    source: (u32, u32),
+    output: (u32, u32),
+    alpha: bool,
+) -> Result<()> {
+    validate_processing_dimensions(source, output)?;
+    if source == output {
+        return Ok(());
+    }
+    let intermediate = checked_buffer_len(source.0, output.1, 16)? as u64;
+    let float_source = if alpha {
+        checked_buffer_len(source.0, source.1, 16)? as u64
+    } else {
+        0
+    };
+    let weights = u64::from(source.0.max(source.1)) * 8;
+    let bytes = estimated_processing_bytes(source, output)?
+        .checked_add(intermediate)
+        .and_then(|bytes| bytes.checked_add(float_source))
+        .and_then(|bytes| bytes.checked_add(weights))
+        .context("resize memory estimate overflow")?;
+    ensure!(bytes <= MAX_ESTIMATED_BYTES, "estimated working memory including resize buffers is {bytes} bytes; budget is {MAX_ESTIMATED_BYTES} bytes; use a smaller --scale or a smaller source image");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scale_rounding_tiny_and_invalid_values() {
+        assert_eq!(scaled_dimensions((17, 11), 0.5).unwrap(), (9, 6));
+        assert_eq!(scaled_dimensions((1, 3), 0.5).unwrap(), (1, 2));
+        assert_eq!(
+            scaled_dimensions((1, 1), f64::MIN_POSITIVE).unwrap(),
+            (1, 1)
+        );
+        assert_eq!(scaled_dimensions((17, 11), 1.0).unwrap(), (17, 11));
+        assert_eq!(
+            scaled_dimensions((u32::MAX, u32::MAX), 1.0).unwrap(),
+            (u32::MAX, u32::MAX)
+        );
+        for scale in [0.0, -0.1, 1.1, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(scaled_dimensions((1, 1), scale).is_err());
+        }
+        assert!(scaled_dimensions((0, 1), 0.5).is_err());
+        assert!(scaled_dimensions((1, 0), 0.5).is_err());
+    }
+
+    #[test]
+    fn resize_scratch_cannot_bypass_memory_budget() {
+        assert!(validate_resize_dimensions((10_000, 10_000), (1000, 1000), false).is_err());
+        assert!(validate_resize_dimensions((4000, 4000), (1000, 1000), true).is_ok());
+        // A skinny source can have a small output but an enormous intermediate.
+        assert!(validate_resize_dimensions((100_000_000, 1), (1, 1), false).is_err());
+        assert!(validate_resize_dimensions((2000, 2000), (2000, 2000), true).is_ok());
+    }
 
     #[test]
     fn packed_layout_and_overflow() {

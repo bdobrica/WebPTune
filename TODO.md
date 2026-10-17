@@ -39,23 +39,37 @@ Validation: Rust 1.89.0 `cargo check --all-targets --locked`,
 `cargo fmt --all -- --check`, `cargo clippy --all-targets --locked -- -D warnings`,
 and `cargo test --all-targets --locked` (nine unit tests, ten CLI integration
 tests, and five Phase 0 prototype tests on Linux).
-The CLI now validates arguments and paths; valid requests still exit nonzero
-with an explicit pending-pipeline diagnostic and no output. The reusable header
-and processing limits will be connected to decoding/resizing in Phase 2.
+Phase 1 established argument/path validation and a pending-pipeline error without
+output. Phase 2 now connects the reusable header and processing limits to
+decoding/resizing; optimization and output remain pending.
 See [PLAN.md, section 13](PLAN.md#13-phase-1-cli-and-validation-decisions).
 
 ## Phase 2 — Decode, normalize and resize (M1)
 
-- [ ] Decode supported still images (JPEG, PNG, WebP, BMP) and report unsupported formats.
-- [ ] Reject malformed/corrupt input and excessive image dimensions before large allocations where possible.
-- [ ] Detect and reject animation where supported; explicitly document remaining limitations.
-- [ ] Scale dimensions with `max(1, round(dimension * scale))`, checked for overflow and codec limits.
-- [ ] Resize with Lanczos3 at most once; bypass resize when scale is 1.
-- [ ] Normalize opaque source to RGB8 and alpha-bearing source to RGBA8.
-- [ ] Document lack of full ICC/profile, EXIF rotation and 16-bit fidelity in v0.1.
-- [ ] Add fixtures for RGB PNG, JPEG, BMP, RGBA and tiny images.
+- [x] Decode supported still images (JPEG, PNG, WebP, BMP) and report unsupported formats.
+- [x] Reject malformed/corrupt input and excessive image dimensions before large allocations where possible.
+- [x] Detect and reject animation where supported; explicitly document remaining limitations.
+- [x] Scale dimensions with `max(1, round(dimension * scale))`, checked for overflow and codec limits.
+- [x] Resize with Lanczos3 at most once; bypass resize when scale is 1.
+- [x] Normalize opaque source to RGB8 and alpha-bearing source to RGBA8.
+- [x] Document lack of full ICC/profile, EXIF rotation and 16-bit fidelity in v0.1.
+- [x] Add fixtures for RGB PNG, JPEG, BMP, RGBA and tiny images.
 
 **Gate:** dimensions and alpha representation are correct before encoding.
+
+Validation: Rust 1.89.0 `cargo check --all-targets --locked`,
+`cargo fmt --all -- --check`, `cargo clippy --all-targets --locked -- -D warnings`,
+and `cargo test --all-targets --locked` (eleven unit tests, twenty-two integration
+tests and five Phase 0 prototype tests on Linux).
+
+The CLI now decodes and prepares a reference before reporting that optimization
+and output remain pending in phases 3–5. It creates no output and preserves any
+existing destination. Input tests cover supported formats, alpha/opaque layouts,
+rounded and tiny scales, premultiplied-alpha filtering, animation rejection,
+header limits, malformed data, grayscale/16-bit conversion and explicit EXIF
+behavior. The committed synthetic fixtures have a reproducible generator and
+provenance. See [PLAN.md, section 14](PLAN.md#14-phase-2-image-preparation-decisions)
+for resize memory accounting and decoder/animation limitations.
 
 ## Phase 3 — Metric and candidate evaluation (M2)
 
