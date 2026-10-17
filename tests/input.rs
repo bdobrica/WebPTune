@@ -35,7 +35,13 @@ fn supported_rgb_formats_produce_packed_pixels() {
 #[test]
 fn format_detection_uses_contents_instead_of_extensions() {
     let directory = tempdir().unwrap();
-    for name in ["wrong.jpg", "no-extension", "input.unsupported"] {
+    for name in [
+        "wrong.jpg",
+        "no-extension",
+        "input.unsupported",
+        "imagine-șț-日本語.png",
+        "image with spaces.png",
+    ] {
         let path = directory.path().join(name);
         fs::copy(fixture("rgba.png"), &path).unwrap();
         let image = input::load(&path, 1.0).unwrap();
@@ -49,8 +55,21 @@ fn format_detection_uses_contents_instead_of_extensions() {
         let path = directory
             .path()
             .join(OsString::from_vec(b"input-\xff.png".to_vec()));
-        fs::copy(fixture("rgb.png"), &path).unwrap();
-        assert!(input::load(&path, 1.0).is_ok());
+        match fs::copy(fixture("rgb.png"), &path) {
+            Ok(_) => {
+                let image = input::load(&path, 1.0).unwrap();
+                assert_eq!(image.pixels().dimensions(), (17, 11));
+                assert!(!image.pixels().has_alpha());
+            }
+            // macOS filesystems can reject an invalid UTF-8 filename before
+            // the loader runs (Darwin EILSEQ = 92). Only that fixture-creation
+            // error is tolerated; loading errors and other I/O errors fail.
+            #[cfg(target_os = "macos")]
+            Err(error) if error.raw_os_error() == Some(92) => {
+                eprintln!("raw-byte filename check unavailable: {error}");
+            }
+            Err(error) => panic!("cannot create raw-byte filename fixture: {error}"),
+        }
     }
 }
 
