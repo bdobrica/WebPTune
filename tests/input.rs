@@ -269,20 +269,44 @@ fn cli_reports_prepared_dimensions_writes_webp_and_preserves_source() {
 #[test]
 fn cli_ingestion_errors_leave_stdout_and_destination_untouched() {
     let directory = tempdir().unwrap();
+    let input = directory.path().join("input.data");
     let destination = directory.path().join("output.webp");
-    for (name, message) in [
+    let mut cases: Vec<_> = [
         ("animated.png", "animated PNG"),
         ("animated.webp", "animated WebP"),
         ("corrupt.png", "cannot read PNG header"),
         ("unsupported.gif", "unsupported input format"),
         ("oversized.bmp", "maximum is 100000000"),
         ("over-budget.bmp", "estimated working memory"),
-    ] {
-        let source = fs::read(fixture(name)).unwrap();
+        ("wide.bmp", "exceeds WebP's maximum"),
+        ("wide.png", "exceeds WebP's maximum"),
+    ]
+    .into_iter()
+    .map(|(name, message)| (name, fs::read(fixture(name)).unwrap(), message))
+    .collect();
+    cases.extend([
+        (
+            "empty",
+            Vec::new(),
+            "unsupported or unrecognized input format",
+        ),
+        (
+            "unknown",
+            b"not an image".to_vec(),
+            "unsupported or unrecognized input format",
+        ),
+    ]);
+    for name in ["rgb.png", "rgb.jpg", "rgb.bmp", "rgb.webp"] {
+        let mut bytes = fs::read(fixture(name)).unwrap();
+        bytes.truncate(bytes.len() / 2);
+        cases.push((name, bytes, "cannot"));
+    }
+    for (name, source, message) in cases {
+        fs::write(&input, &source).unwrap();
         for output in [destination.as_path(), Path::new("-")] {
             let result = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"))
                 .arg("-i")
-                .arg(fixture(name))
+                .arg(&input)
                 .arg("-o")
                 .arg(output)
                 .output()
@@ -291,14 +315,16 @@ fn cli_ingestion_errors_leave_stdout_and_destination_untouched() {
             assert!(result.stdout.is_empty());
             assert!(
                 String::from_utf8_lossy(&result.stderr).contains(message),
-                "{result:?}"
+                "{name}: {result:?}"
             );
             assert!(!destination.exists());
+            assert_eq!(fs::read(&input).unwrap(), source);
+            assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
         }
         fs::write(&destination, b"existing output").unwrap();
         let result = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"))
             .arg("-i")
-            .arg(fixture(name))
+            .arg(&input)
             .arg("-o")
             .arg(&destination)
             .output()
@@ -306,7 +332,8 @@ fn cli_ingestion_errors_leave_stdout_and_destination_untouched() {
         assert_eq!(result.status.code(), Some(1));
         assert!(result.stdout.is_empty());
         assert_eq!(fs::read(&destination).unwrap(), b"existing output");
-        assert_eq!(fs::read(fixture(name)).unwrap(), source);
+        assert_eq!(fs::read(&input).unwrap(), source);
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 2);
         fs::remove_file(&destination).unwrap();
     }
 }

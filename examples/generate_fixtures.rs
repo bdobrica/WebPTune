@@ -1,7 +1,7 @@
 //! Rebuild the small synthetic input corpus; no external image assets are used.
 
 use std::fs::{self, File};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
 use image::{DynamicImage, ImageBuffer, ImageFormat, Luma, LumaA, Rgb, RgbImage, Rgba, RgbaImage};
@@ -11,7 +11,11 @@ fn main() -> Result<()> {
         .nth(1)
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("tests/fixtures"));
-    fs::create_dir_all(&directory)?;
+    generate(&directory)
+}
+
+fn generate(directory: &Path) -> Result<()> {
+    fs::create_dir_all(directory)?;
     let rgb = RgbImage::from_fn(17, 11, |x, y| {
         Rgb([
             (x * 13) as u8,
@@ -116,4 +120,43 @@ fn main() -> Result<()> {
     DynamicImage::ImageRgb8(RgbImage::from_pixel(20_000, 1, Rgb([80, 120, 160])))
         .save(directory.join("wide.png"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generator_reproduces_committed_fixtures_and_repeated_runs() {
+        let generated = tempfile::tempdir().unwrap();
+        let repeated = tempfile::tempdir().unwrap();
+        generate(generated.path()).unwrap();
+        generate(repeated.path()).unwrap();
+        let committed = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let image_names = |directory: &Path| {
+            let mut names: Vec<_> = fs::read_dir(directory)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .filter(|name| name != "README.md")
+                .collect();
+            names.sort();
+            names
+        };
+        let names = image_names(&committed);
+        assert_eq!(image_names(generated.path()), names);
+        assert_eq!(image_names(repeated.path()), names);
+        for name in names {
+            let expected = fs::read(committed.join(&name)).unwrap();
+            assert_eq!(
+                fs::read(generated.path().join(&name)).unwrap(),
+                expected,
+                "{name:?}"
+            );
+            assert_eq!(
+                fs::read(repeated.path().join(&name)).unwrap(),
+                expected,
+                "{name:?}"
+            );
+        }
+    }
 }

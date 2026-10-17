@@ -91,3 +91,129 @@ fn invalid_input_preserves_destination_and_leaves_no_temporary_output() {
     assert_eq!(fs::read(&destination).unwrap(), b"existing destination");
     assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 2);
 }
+
+// Use the OS temporary directory so these exercise native Unix permissions,
+// even when the checkout is on a filesystem that ignores chmod (e.g. DrvFs).
+#[cfg(unix)]
+mod permissions {
+    use super::*;
+    use std::fs::{File, OpenOptions, Permissions};
+    use std::io::ErrorKind;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::{Path, PathBuf};
+    use std::process::Output;
+
+    struct RestorePermissions(PathBuf, Permissions);
+
+    impl RestorePermissions {
+        fn set(path: &Path, mode: u32) -> Self {
+            let original = fs::metadata(path).unwrap().permissions();
+            fs::set_permissions(path, Permissions::from_mode(mode)).unwrap();
+            Self(path.to_owned(), original)
+        }
+    }
+
+    impl Drop for RestorePermissions {
+        fn drop(&mut self) {
+            // Restore on assertion failures too, allowing TempDir cleanup.
+            fs::set_permissions(&self.0, self.1.clone()).unwrap();
+        }
+    }
+
+    fn assert_permission_failure(result: &Output, context: &str) {
+        assert_eq!(result.status.code(), Some(1), "{result:?}");
+        assert!(result.stdout.is_empty());
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(stderr.contains(context), "{stderr}");
+        assert!(!stderr.contains("Wrote WebP"), "{stderr}");
+    }
+
+    #[test]
+    fn unreadable_input_preserves_source_and_existing_or_absent_destination() {
+        let directory = tempdir().unwrap();
+        let input = directory.path().join("input.png");
+        let destination = directory.path().join("output.webp");
+        fs::write(&input, SOURCE).unwrap();
+        let restore = RestorePermissions::set(&input, 0o000);
+        match File::open(&input) {
+            Err(error) => assert_eq!(error.kind(), ErrorKind::PermissionDenied),
+            Ok(_) => {
+                eprintln!("skipping unreadable-input check: this user/filesystem bypasses Unix read permissions");
+                return;
+            }
+        }
+        for existing in [false, true] {
+            if existing {
+                fs::write(&destination, b"existing destination").unwrap();
+            }
+            for target in [destination.as_os_str(), std::ffi::OsStr::new("-")] {
+                let result = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"))
+                    .arg("-i")
+                    .arg(&input)
+                    .arg("-o")
+                    .arg(target)
+                    .output()
+                    .unwrap();
+                assert_permission_failure(&result, "cannot read input");
+                if existing {
+                    assert_eq!(fs::read(&destination).unwrap(), b"existing destination");
+                } else {
+                    assert!(!destination.exists());
+                }
+                assert_eq!(
+                    fs::read_dir(directory.path()).unwrap().count(),
+                    1 + usize::from(existing)
+                );
+            }
+        }
+        drop(restore);
+        assert_eq!(fs::read(&input).unwrap(), SOURCE);
+    }
+
+    #[test]
+    fn unwritable_output_directory_preserves_source_destination_and_no_staging_files() {
+        let directory = tempdir().unwrap();
+        let input = directory.path().join("input.png");
+        let parent = directory.path().join("locked");
+        let destination = parent.join("output.webp");
+        fs::write(&input, SOURCE).unwrap();
+        fs::create_dir(&parent).unwrap();
+        for existing in [false, true] {
+            if existing {
+                fs::write(&destination, b"existing destination").unwrap();
+            }
+            let restore = RestorePermissions::set(&parent, 0o555);
+            let probe = parent.join("permission-probe");
+            match OpenOptions::new().write(true).create_new(true).open(&probe) {
+                Err(error) => assert_eq!(error.kind(), ErrorKind::PermissionDenied),
+                Ok(file) => {
+                    drop(file);
+                    drop(restore);
+                    fs::remove_file(&probe).unwrap();
+                    eprintln!("skipping unwritable-directory check: this user/filesystem bypasses Unix write permissions");
+                    return;
+                }
+            }
+            let result = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"))
+                .arg("-i")
+                .arg(&input)
+                .arg("-o")
+                .arg(&destination)
+                .output()
+                .unwrap();
+            drop(restore);
+            assert_permission_failure(&result, "cannot create temporary output");
+            assert_eq!(fs::read(&input).unwrap(), SOURCE);
+            if existing {
+                assert_eq!(fs::read(&destination).unwrap(), b"existing destination");
+            } else {
+                assert!(!destination.exists());
+            }
+            assert_eq!(
+                fs::read_dir(&parent).unwrap().count(),
+                usize::from(existing)
+            );
+            assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 2);
+        }
+    }
+}

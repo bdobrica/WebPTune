@@ -1,6 +1,6 @@
 # Implementation Plan — WebP SSIM Optimizer
 
-**Status:** Phases 0–5 implemented; phases 6–8 planned · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
+**Status:** Phases 0–6 implemented; phases 7–8 planned · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
 
 ## 1. Purpose and scope
 
@@ -648,3 +648,52 @@ thresholds 0/80/100. Focused I/O tests verify staged replacement, short/interrup
 writes, injected partial disk-full and deferred flush errors, cleanup on failed
 rename, collision revalidation and a real Unix broken stdout connection.
 An unrelated symlink test verifies entry replacement and referent preservation.
+
+## 18. Phase 6 functional and integration coverage
+
+The executable matrix in `tests/evaluation.rs` covers 11 fixtures: JPEG, RGB
+PNG/BMP/WebP, RGBA PNG/WebP, opaque RGBA PNG, 1x1 RGB/RGBA, fully transparent
+pixels and transparent color edges. Every fixture runs at scales 1 and 0.5,
+thresholds 0/80/90/100, and both file and stdout output: 88 conversions, each
+written through both output routes (176 process invocations). Thresholds 90/100
+also exercise verbose reporting. Tests check initial creation and replacement,
+dimensions including odd-axis rounding and tiny-axis clamping, exact alpha
+preservation, source preservation, absence of leftover temporary files, stderr
+reports and empty stdout for file output.
+
+Written bytes must match the selected in-memory candidate exactly, making
+file/stdout equality explicit across the matrix. A separate image decoder and
+the one-shot `fast_ssim2` API independently score each payload against the
+prepared reference; no application candidate decoder or cached metric is used
+for that verification. The reference still uses application image preparation,
+whose pixel normalization and premultiplied-alpha resizing have separate tests.
+Scores must satisfy the exact threshold without rounding or an epsilon.
+
+The existing search unit tests cover impossible thresholds using synthetic
+scores, including measured lossless below 100 and all scores below zero. The
+CLI rejects thresholds outside [0,100]. The real fixture corpus reaches 100
+through measured lossless, so it does not provide a natural unachievable
+threshold case; production codec behavior is not overridden for a CLI test.
+Existing metric tests check that hidden RGB under alpha zero has no visible
+effect, while partial transparency and alpha changes affect the score.
+
+Ingestion failure tests now copy their sources into an isolated directory and
+cover empty/unknown data, truncated PNG/JPEG/BMP/WebP, corrupt PNG, unsupported
+GIF, animation and source/working-memory/WebP-axis limits. Each failure must
+return nonzero with empty stdout, preserve input and any destination, and leave
+no staging files. Alias/hard-link/symlink rejection remains covered by CLI tests.
+
+Unix permission tests use the OS temporary directory, rather than the checkout
+filesystem. They remove read permission from the source or write permission
+from the output directory, verify the OS actually returns `PermissionDenied`,
+then invoke the real CLI with absent and existing destinations. They restore
+permissions even during unwinding. These two tests explicitly report a skip
+when the user (such as root) or filesystem bypasses mode restrictions; Windows
+ACLs and macOS/Windows execution remain Phase 7 work. Both permission checks ran
+without skipping during Linux validation for this phase.
+
+The fixture generator now has a regression test that generates into two
+temporary directories, checks the complete filename sets, and compares every
+image byte with both runs and the committed corpus under the locked dependency
+versions. No external assets or new dependencies are needed; fixture provenance
+and the repository MIT license are recorded in `tests/fixtures/README.md`.

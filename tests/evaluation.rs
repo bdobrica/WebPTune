@@ -438,59 +438,102 @@ fn minimum_search_budget_still_measures_both_endpoints_and_lossless() {
 
 #[test]
 fn file_and_stdout_match_selected_bytes_and_independent_scores() {
-    for (name, scale, threshold) in [
-        ("rgb.png", 1.0, 0.0),
-        ("rgb.png", 0.5, 80.0),
-        ("rgba.png", 1.0, 80.0),
-        ("tiny-rgba.png", 0.5, 100.0),
+    // Cross every format/alpha case with both scales and every requested
+    // threshold at the executable boundary, rather than only testing trials.
+    for (name, dimensions) in [
+        ("rgb.png", (17, 11)),
+        ("rgb.jpg", (17, 11)),
+        ("rgb.bmp", (17, 11)),
+        ("rgb.webp", (17, 11)),
+        ("rgba.png", (17, 11)),
+        ("rgba.webp", (17, 11)),
+        ("opaque-rgba.png", (17, 11)),
+        ("tiny-rgb.png", (1, 1)),
+        ("tiny-rgba.png", (1, 1)),
+        ("transparent.png", (3, 2)),
+        ("alpha-edge.png", (4, 2)),
     ] {
         let directory = tempdir().unwrap();
         let source = directory.path().join("input.png");
         let destination = directory.path().join("output.webp");
         let original = fs::read(fixture(name)).unwrap();
         fs::write(&source, &original).unwrap();
-        let prepared = input::load(&source, scale).unwrap();
-        let selected =
-            search::search(&TrialEvaluator::new(prepared.pixels()).unwrap(), threshold).unwrap();
-        for verbose in [false, true] {
-            for target in [destination.as_os_str(), std::ffi::OsStr::new("-")] {
-                let mut command = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"));
-                command.arg("-i").arg(&source).arg("-o").arg(target).args([
-                    "-s",
-                    &scale.to_string(),
-                    "-t",
-                    &threshold.to_string(),
-                ]);
-                if verbose {
-                    command.arg("-v");
-                }
-                let result = command.output().unwrap();
-                assert!(result.status.success(), "{:?}", result.stderr);
-                let bytes = if target == std::ffi::OsStr::new("-") {
-                    result.stdout
+        for scale in [1.0_f64, 0.5] {
+            let prepared = input::load(&source, scale).unwrap();
+            let expected_dimensions = (
+                (f64::from(dimensions.0) * scale).round().max(1.0) as u32,
+                (f64::from(dimensions.1) * scale).round().max(1.0) as u32,
+            );
+            assert_eq!(prepared.original_dimensions(), dimensions);
+            assert_eq!(prepared.pixels().dimensions(), expected_dimensions);
+            for threshold in [0.0, 80.0, 90.0, 100.0] {
+                let selected =
+                    search::search(&TrialEvaluator::new(prepared.pixels()).unwrap(), threshold)
+                        .unwrap();
+                let verbose = threshold == 90.0 || threshold == 100.0;
+                // Test both first creation and replacement, for each case.
+                if threshold == 0.0 {
+                    if destination.exists() {
+                        fs::remove_file(&destination).unwrap();
+                    }
                 } else {
-                    assert!(result.stdout.is_empty());
-                    fs::read(&destination).unwrap()
-                };
-                assert_eq!(bytes, selected.candidate().bytes());
-                let score = independent_score(prepared.pixels(), &bytes);
-                assert_eq!(score, selected.candidate().score());
-                assert!(score >= threshold);
-                let stderr = String::from_utf8(result.stderr).unwrap();
-                assert_eq!(stderr.contains("Trial "), verbose);
-                assert!(stderr.contains(&format!("selected {:?}", selected.candidate().mode())));
-                assert!(stderr.contains(&format!("{} bytes", bytes.len())));
-                assert!(stderr.contains(&format!("score {:.6}", score)));
-                assert!(stderr.contains(&format!(
-                    "{}x{} -> {}x{}",
-                    prepared.original_dimensions().0,
-                    prepared.original_dimensions().1,
-                    prepared.pixels().dimensions().0,
-                    prepared.pixels().dimensions().1
-                )));
-                assert!(stderr.contains(&format!("{} measured trials", selected.trials().len())));
-                assert_eq!(fs::read(&source).unwrap(), original);
-                assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 2);
+                    fs::write(&destination, b"existing destination").unwrap();
+                }
+                for target in [destination.as_os_str(), std::ffi::OsStr::new("-")] {
+                    let mut command = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"));
+                    command.arg("-i").arg(&source).arg("-o").arg(target).args([
+                        "-s",
+                        &scale.to_string(),
+                        "-t",
+                        &threshold.to_string(),
+                    ]);
+                    if verbose {
+                        command.arg("-v");
+                    }
+                    let result = command.output().unwrap();
+                    assert!(
+                        result.status.success(),
+                        "{name} scale={scale} threshold={threshold}: {result:?}"
+                    );
+                    let bytes = if target == std::ffi::OsStr::new("-") {
+                        result.stdout
+                    } else {
+                        assert!(result.stdout.is_empty());
+                        fs::read(&destination).unwrap()
+                    };
+                    assert_eq!(bytes, selected.candidate().bytes());
+                    let decoded =
+                        image::load_from_memory_with_format(&bytes, ImageFormat::WebP).unwrap();
+                    assert_eq!((decoded.width(), decoded.height()), expected_dimensions);
+                    if prepared.pixels().has_alpha() {
+                        assert!(prepared
+                            .pixels()
+                            .as_bytes()
+                            .chunks_exact(4)
+                            .map(|p| p[3])
+                            .eq(decoded.to_rgba8().pixels().map(|p| p[3])));
+                    }
+                    let score = independent_score(prepared.pixels(), &bytes);
+                    assert_eq!(score, selected.candidate().score());
+                    assert!(score >= threshold);
+                    let stderr = String::from_utf8(result.stderr).unwrap();
+                    assert_eq!(stderr.contains("Trial "), verbose);
+                    assert!(stderr.contains(&format!("selected {:?}", selected.candidate().mode())));
+                    assert!(stderr.contains(&format!("{} bytes", bytes.len())));
+                    assert!(stderr.contains(&format!("score {:.6}", score)));
+                    assert!(stderr.contains(&format!(
+                        "{}x{} -> {}x{}",
+                        prepared.original_dimensions().0,
+                        prepared.original_dimensions().1,
+                        prepared.pixels().dimensions().0,
+                        prepared.pixels().dimensions().1
+                    )));
+                    assert!(
+                        stderr.contains(&format!("{} measured trials", selected.trials().len()))
+                    );
+                    assert_eq!(fs::read(&source).unwrap(), original);
+                    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 2);
+                }
             }
         }
     }

@@ -162,17 +162,37 @@ permissions, durability and platform limits.
 
 ## Phase 6 — Functional/integration tests (M5)
 
-- [ ] Test JPEG, RGB PNG, RGBA PNG, BMP and WebP inputs.
-- [ ] Test scale `1`, `0.5`, tiny dimensions and odd dimensions.
-- [ ] Test thresholds `0`, `80`, `90`, `100`, and impossible/corner scenarios.
-- [ ] Test RGB under transparent alpha, partially transparent pixels, and fully transparent images.
-- [ ] Test all supported outputs decode and satisfy the measured score constraint.
-- [ ] Test same-file rejection, corrupted input, unreadable files, unwritable outputs, and oversized images.
-- [ ] Compare byte-identical result for file vs stdout with identical options (if codec deterministic).
-- [ ] Confirm original file remains unchanged on success and failure.
-- [ ] Record fixture licenses/provenance and add deterministic synthetic fixture generator.
+- [x] Test JPEG, RGB PNG, RGBA PNG, BMP and WebP inputs.
+- [x] Test scale `1`, `0.5`, tiny dimensions and odd dimensions.
+- [x] Test thresholds `0`, `80`, `90`, `100`, and impossible/corner scenarios.
+- [x] Test RGB under transparent alpha, partially transparent pixels, and fully transparent images.
+- [x] Test all supported outputs decode and satisfy the measured score constraint.
+- [x] Test same-file rejection, corrupted input, unreadable files, unwritable outputs, and oversized images.
+- [x] Compare byte-identical result for file vs stdout with identical options (if codec deterministic).
+- [x] Confirm original file remains unchanged on success and failure.
+- [x] Record fixture licenses/provenance and add deterministic synthetic fixture generator.
 
 **Gate:** integration suite covers correctness, failure, resizing, alpha and CLI hygiene.
+
+Validation: Rust 1.89.0 `cargo check --all-targets --locked --offline`,
+`cargo fmt --all -- --check`,
+`cargo clippy --all-targets --locked --offline -- -D warnings`, and
+`cargo test --all-targets --locked --offline` (thirty unit tests, thirty-eight
+integration tests, five API prototype tests and one fixture-generator test;
+74 total on Linux).
+
+The CLI matrix checks 11 fixtures × 2 scales × 4 thresholds × 2 output routes
+(176 invocations). Written bytes match the selected candidate, independently
+decode/score at or above the threshold, preserve alpha/dimensions, and leave
+the source unchanged. Failures cover aliases, truncated/corrupt/empty/unknown
+inputs, animation and allocation/codec limits, preserving existing destinations
+and leaving no staging files. Unix unreadable-source and unwritable-directory
+tests ran with real permission denial; they report a skip on systems that bypass
+mode restrictions. Impossible valid thresholds use the existing synthetic search
+tests; real fixtures reach 100 through measured lossless. The MIT synthetic
+fixture generator is now tested for byte-identical regeneration twice against
+the committed corpus. See [PLAN.md, section 18](PLAN.md#18-phase-6-functional-and-integration-coverage)
+for coverage boundaries; cross-platform execution remains Phase 7 work.
 
 ## Phase 7 — Performance and robustness (M5)
 

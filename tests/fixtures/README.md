@@ -17,5 +17,12 @@ and header-only BMP files exercise failure and preallocation limit checks.
 The modified BMP headers intentionally have no matching pixel payload.
 
 Encoding is deterministic for the locked dependency versions; binary bytes may
-change when encoders are upgraded. Tests assert decoded behavior rather than
-depending on exact compressed bytes.
+change when encoders are upgraded. Image-processing tests assert decoded
+behavior; output-route comparisons use bytes from the same encoder run/version.
+
+`cargo test --all-targets --locked` also tests the generator itself: it generates
+the complete corpus twice in temporary directories and compares both results
+with the committed image bytes. Update fixtures deliberately when upgrading
+encoders. The functional CLI matrix uses these fixtures to check all supported
+formats, odd/tiny dimensions, opaque/partial/zero alpha, scales 1 and 0.5,
+thresholds 0/80/90/100, and both output routes.

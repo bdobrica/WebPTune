@@ -1,6 +1,6 @@
 # WebP SSIM Optimizer
 
-**Status: Phases 0–5 implemented, including file and binary stdout output.** The CLI now converts supported still images to measured WebP output. Broader integration coverage, performance work and release automation remain in phases 6–8. Implementation is tracked in [TODO.md](TODO.md) and designed in [PLAN.md](PLAN.md).
+**Status: Phases 0–6 implemented, including file/stdout output and functional integration coverage.** The CLI converts supported still images to measured WebP output. Performance work, cross-platform validation and release automation remain in phases 7–8. Implementation is tracked in [TODO.md](TODO.md) and designed in [PLAN.md](PLAN.md).
 
 To build and validate the current implementation:
 
@@ -166,12 +166,25 @@ verbose history, and cover staged replacement, cleanup, late collisions, partial
 writes, injected disk-full/flush errors and a real broken stdout connection.
 The suite also retains the Phase 0 API tests.
 
+The executable matrix crosses 11 fixtures with scales 1/0.5, thresholds
+0/80/90/100, and file/stdout output (176 CLI invocations). Every payload is
+independently decoded and scored, with byte-identical file/stdout results and
+checks for dimensions, alpha, diagnostics and source preservation. Unix tests
+also exercise unreadable sources and unwritable output directories; these
+explicitly report a skip if the user/filesystem bypasses Unix permissions.
+Impossible valid thresholds use synthetic search tests because measured
+lossless reaches 100 on the real corpus. See
+[Phase 6 coverage](PLAN.md#18-phase-6-functional-and-integration-coverage).
+
 The synthetic fixtures are committed under `tests/fixtures`, with provenance in
 [their README](tests/fixtures/README.md). Regenerate them with:
 
 ```bash
 cargo run --locked --example generate_fixtures
 ```
+
+The generator's test rebuilds the corpus twice in temporary directories and
+compares every fixture byte with the committed files using locked dependencies.
 
 See [PLAN.md](PLAN.md) for architecture, edge cases, algorithm decisions, release gates and deferred features. See [TODO.md](TODO.md) for the task-by-task checklist.
 
