@@ -176,6 +176,32 @@ fn every_integer_lossy_quality_is_supported_and_out_of_range_is_rejected() {
 }
 
 #[test]
+fn timed_and_ordinary_evaluation_return_identical_measured_candidates() {
+    for name in ["rgb.png", "rgba.png", "tiny-rgba.png", "transparent.png"] {
+        let prepared = input::load(&fixture(name), 1.0).unwrap();
+        let evaluator = TrialEvaluator::new(prepared.pixels()).unwrap();
+        for mode in [
+            Mode::Lossy { quality: 0 },
+            Mode::Lossy { quality: 100 },
+            Mode::Lossless,
+        ] {
+            let ordinary = evaluator.evaluate(mode).unwrap();
+            let (timed, _) = evaluator.evaluate_timed(mode).unwrap();
+            assert_eq!(timed.mode(), ordinary.mode());
+            assert_eq!(timed.bytes(), ordinary.bytes());
+            assert_eq!(timed.score(), ordinary.score());
+            assert_eq!(
+                timed.score(),
+                independent_score(prepared.pixels(), timed.bytes())
+            );
+        }
+        assert!(evaluator
+            .evaluate_timed(Mode::Lossy { quality: 101 })
+            .is_err());
+    }
+}
+
+#[test]
 fn invalid_pixel_layouts_and_dimensions_fail_before_codec_or_metric_work() {
     for pixels in [
         Pixels::Rgb(RgbImage::new(0, 1)),

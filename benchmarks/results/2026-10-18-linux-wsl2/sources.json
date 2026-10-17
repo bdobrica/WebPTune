@@ -1,0 +1,5 @@
+{
+  "Cargo.lock": "ac83679714a44a4f1711eaeb4ea13d6bdfeda31b7dbe21863865f77b18e294cc",
+  "src/encoder.rs": "4d656167a87cf2444ec6ab89c8223b762eecc589f4ee541fc11b8c0a56633c8d",
+  "examples/benchmark.rs": "60dc23eeb9b108de58b0b9a2b6731d7bcdcb5da3f8bf42118c7e82307951f4df"
+}

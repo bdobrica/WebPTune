@@ -5,8 +5,67 @@ use std::process::Command;
 
 use tempfile::tempdir;
 
-#[cfg(unix)]
 const SOURCE: &[u8] = include_bytes!("fixtures/rgb.png");
+
+#[test]
+fn replacing_existing_destination_with_hard_link_preserves_other_link() {
+    let directory = tempdir().unwrap();
+    let input = directory.path().join("input.png");
+    let destination = directory.path().join("output.webp");
+    let other_link = directory.path().join("other.webp");
+    fs::write(&input, SOURCE).unwrap();
+    fs::write(&destination, b"old destination").unwrap();
+    fs::hard_link(&destination, &other_link).unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"))
+        .arg("-i")
+        .arg(&input)
+        .arg("-o")
+        .arg(&destination)
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{result:?}");
+    assert!(result.stdout.is_empty());
+    image::load_from_memory_with_format(&fs::read(&destination).unwrap(), image::ImageFormat::WebP)
+        .unwrap();
+    assert_eq!(fs::read(&input).unwrap(), SOURCE);
+    assert_eq!(fs::read(&other_link).unwrap(), b"old destination");
+    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 3);
+}
+
+#[cfg(windows)]
+#[test]
+fn destination_open_without_delete_sharing_preserves_old_file_on_failure() {
+    use std::fs::OpenOptions;
+    use std::os::windows::fs::OpenOptionsExt;
+
+    let directory = tempdir().unwrap();
+    let input = directory.path().join("input.png");
+    let destination = directory.path().join("output.webp");
+    fs::write(&input, SOURCE).unwrap();
+    fs::write(&destination, b"old destination").unwrap();
+    // Permit validation reads while denying deletion/rename (FILE_SHARE_READ).
+    let held = OpenOptions::new()
+        .read(true)
+        .share_mode(1)
+        .open(&destination)
+        .unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"))
+        .arg("-i")
+        .arg(&input)
+        .arg("-o")
+        .arg(&destination)
+        .output()
+        .unwrap();
+    drop(held);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(result.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(stderr.contains("cannot replace output"), "{stderr}");
+    assert!(!stderr.contains("Wrote WebP"));
+    assert_eq!(fs::read(&input).unwrap(), SOURCE);
+    assert_eq!(fs::read(&destination).unwrap(), b"old destination");
+    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 2);
+}
 
 #[cfg(unix)]
 #[test]

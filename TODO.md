@@ -196,15 +196,32 @@ for coverage boundaries; cross-platform execution remains Phase 7 work.
 
 ## Phase 7 — Performance and robustness (M5)
 
-- [ ] Run benchmarks on photo, noisy photo, flat-color icon and transparent art at multiple sizes.
-- [ ] Measure encode/decode/metric timing separately and total candidate count.
-- [ ] Measure peak memory and add tighter limits if large images are hazardous.
-- [ ] Compare `cargo build --release` with `RUSTFLAGS="-C target-cpu=native" cargo build --release` on local hardware.
-- [ ] Assess whether cached metric reference meaningfully improves run time.
-- [ ] Run `cargo fmt`, `cargo clippy -D warnings`, all unit/integration tests.
+- [x] Run benchmarks on photo, noisy photo, flat-color icon and transparent art at multiple sizes.
+- [x] Measure encode/decode/metric timing separately and total candidate count.
+- [x] Measure peak memory and add tighter limits if large images are hazardous.
+- [x] Compare `cargo build --release` with `RUSTFLAGS="-C target-cpu=native" cargo build --release` on local hardware.
+- [x] Assess whether cached metric reference meaningfully improves run time.
+- [x] Run `cargo fmt`, `cargo clippy -D warnings`, all unit/integration tests.
 - [ ] Test Linux, macOS and Windows, including file replacement behavior.
 
 **Gate:** document at least one representative benchmark run and all known limits.
+
+Local gate met: the [reproducible harness](benchmarks/README.md) and
+[reviewed Linux baseline](benchmarks/RESULTS.md) include separate stage timings,
+actual candidate counts, 48 portable/native CLI measurements at 256²/768²,
+and eight fresh memory-only conversions at 2000² or 4000² resized to 1000².
+Raw repetitions, source/input/binary hashes and toolchain metadata are committed.
+Cached metric work was about 1.46–1.67× faster including setup; native tuning
+was workload dependent. Peak RSS reached about 669 MiB, so the existing 1 GiB
+estimate/resize guards are retained; this is not a hard process memory cap.
+
+Validation: Rust 1.89.0 format, Clippy (`-D warnings`), all-target check, all
+76 tests and both release builds passed with locked/offline dependencies on Linux.
+Timed/ordinary evaluator equivalence and preserving other hard links to an old
+destination are tested. A Windows-specific sharing/rename failure test is ready
+but unexecuted. No macOS runner or Windows Rust/C toolchain is available here;
+the platform checkbox deliberately remains open until real runs pass, including
+replacement behavior. See [PLAN.md, section 19](PLAN.md#19-phase-7-performance-and-robustness).
 
 ## Phase 8 — Documentation, CI and release (M5)
 

@@ -1,6 +1,6 @@
 # WebP SSIM Optimizer
 
-**Status: Phases 0–6 implemented, including file/stdout output and functional integration coverage.** The CLI converts supported still images to measured WebP output. Performance work, cross-platform validation and release automation remain in phases 7–8. Implementation is tracked in [TODO.md](TODO.md) and designed in [PLAN.md](PLAN.md).
+**Status: Phases 0–6 complete; Phase 7 performance and robustness work implemented and validated on Linux.** macOS/Windows execution remains unverified, with the Phase 7 platform check still open. Documentation, CI and release work remains in Phase 8. Implementation is tracked in [TODO.md](TODO.md) and designed in [PLAN.md](PLAN.md).
 
 To build and validate the current implementation:
 
@@ -46,7 +46,7 @@ For a machine-specific optimized build, optionally use:
 RUSTFLAGS="-C target-cpu=native" cargo build --release --locked
 ```
 
-Native CPU tuning can produce a binary unsuitable for other machines. Normal release builds are the portable default. No benchmark-backed performance claims are made before implementation.
+Native CPU tuning can produce a binary unsuitable for other machines. Normal release builds are the portable default. See the [local release/native measurements](benchmarks/RESULTS.md) for observed performance and their limits.
 
 ## Usage
 
@@ -129,7 +129,7 @@ than proving all untested qualities infeasible.
 - **Image metadata:** EXIF, XMP and ICC profiles are not promised to carry over into the WebP output.
 - **Resizing:** each axis uses `max(1, round(dimension * scale))`. Lanczos3 runs once when dimensions change and is bypassed at scale 1 or when rounding keeps the same size. Alpha is premultiplied during filtering and returned as straight alpha; hidden RGB does not tint visible edges. Fully opaque processed images use RGB8; others use RGBA8.
 - **Source safety and overwrite policy:** canonical, symlink and hard-link aliases of the input are refused, with another check immediately before replacement. Existing destinations are replaced via a same-directory temporary file and rename; failures before replacement preserve the old destination and clean up staging files. An unrelated destination symlink is replaced as a directory entry, leaving its referent untouched. Dangling destination symlinks are rejected. Concurrent filesystem changes after validation cannot be fully prevented.
-- **File permissions and durability:** the replacement is a new temporary file, so existing destination permissions/ownership/metadata are not preserved (on Unix, new outputs normally have mode `0600`). Contents are synced before replacement, but the containing directory is not synced; power-loss durability is not guaranteed. Abrupt process termination may leave a temporary file. Windows/macOS replacement behavior still needs platform testing in Phase 7.
+- **File permissions and durability:** the replacement is a new temporary file, so existing destination permissions/ownership/metadata are not preserved (on Unix, new outputs normally have mode `0600`). Contents are synced before replacement, but the containing directory is not synced; power-loss durability is not guaranteed. Abrupt process termination may leave a temporary file. Windows/macOS replacement behavior still needs platform execution; the Phase 7 platform check remains open.
 - **Output failures:** write, flush, sync and rename errors return nonzero. Broken stdout pipes fail too; a partial stdout payload cannot be rolled back. Shell redirection creates/truncates its target before the program runs, so file preservation applies to `-o path`, not `-o - > path`. Keep the redirection target separate from the source.
 - **Safety limits:** headers are checked before pixel decoding: 100 million source pixels, 16,383 pixels per output axis after scaling, and a 1 GiB estimated working-memory budget including metric padding and resize buffers. This conservative estimate permits 2000×2000 at full scale, while 2048×2048 requires downscaling. Decoder limits are configured, but they are best effort. Headers/metadata can allocate earlier (the JPEG decoder buffers compressed input), and the estimate is not a measured peak-memory guarantee.
 - **Corrupt input:** header/pixel decoder errors propagate as failures. Detection follows the underlying decoders; it is not an exhaustive container-integrity check, and permissive decoders can accept recoverable damage or trailing data.
@@ -185,6 +185,14 @@ cargo run --locked --example generate_fixtures
 
 The generator's test rebuilds the corpus twice in temporary directories and
 compares every fixture byte with the committed files using locked dependencies.
+
+The [benchmark harness](benchmarks/README.md) measures real search trial counts,
+encoding, decoding, metric work, reference caching, complete CLI conversions and
+per-process peak memory. It compares separate portable/native release builds on
+identical hashed photo, noisy-photo, icon and transparent-art workloads. Reviewed
+[Linux results and memory-limit assessment](benchmarks/RESULTS.md) include the raw
+repetitions and metadata. The application has no additional runtime dependency;
+the developer runner uses Python's standard library.
 
 See [PLAN.md](PLAN.md) for architecture, edge cases, algorithm decisions, release gates and deferred features. See [TODO.md](TODO.md) for the task-by-task checklist.
 

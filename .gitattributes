@@ -3,3 +3,4 @@ tests/fixtures/*.jpg binary
 tests/fixtures/*.bmp binary
 tests/fixtures/*.webp binary
 tests/fixtures/*.gif binary
+benchmarks/*.png binary

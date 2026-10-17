@@ -1,7 +1,8 @@
 //! Allocation guards to apply to headers before decoding and before processing.
 //!
 //! The working-set estimate is a conservative policy, not a peak-RSS guarantee.
-//! Codec scratch space and allocator overhead still need Phase 7 measurements.
+//! Representative Linux measurements are recorded in benchmarks/RESULTS.md;
+//! codec scratch, metadata and allocator behavior can still vary across inputs.
 
 use anyhow::{ensure, Context, Result};
 

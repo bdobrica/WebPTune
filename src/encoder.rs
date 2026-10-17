@@ -1,6 +1,7 @@
 //! In-memory WebP trial encoding, bounded decoding and measured evaluation.
 
 use std::io::Cursor;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, ensure, Context, Result};
 use image::{codecs::webp::WebPDecoder, DynamicImage, ImageDecoder, Limits};
@@ -17,6 +18,15 @@ pub enum Mode {
         quality: u8,
     },
     Lossless,
+}
+
+/// Optional wall-clock measurements of the same operations used by `evaluate`.
+/// Reference construction and copying the final encoded bytes are excluded.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EvaluationTimings {
+    pub encode: Duration,
+    pub decode: Duration,
+    pub metric: Duration,
 }
 
 /// Encoded bytes and their measured decoded score; no feasibility decision yet.
@@ -77,6 +87,17 @@ impl<'a> TrialEvaluator<'a> {
     }
 
     pub fn evaluate(&self, mode: Mode) -> Result<Trial> {
+        self.evaluate_inner::<false>(mode).map(|(trial, _)| trial)
+    }
+
+    /// Benchmark a trial without changing encoding, decoding or scoring policy.
+    /// Ordinary evaluation does not read the clock.
+    pub fn evaluate_timed(&self, mode: Mode) -> Result<(Trial, EvaluationTimings)> {
+        self.evaluate_inner::<true>(mode)
+    }
+
+    fn evaluate_inner<const TIMED: bool>(&self, mode: Mode) -> Result<(Trial, EvaluationTimings)> {
+        let start = TIMED.then(Instant::now);
         let quality = match mode {
             Mode::Lossy { quality } => {
                 ensure!(quality <= 100, "WebP lossy quality must be in 0..=100");
@@ -103,21 +124,42 @@ impl<'a> TrialEvaluator<'a> {
         let encoded = encoder
             .encode_advanced(&config)
             .map_err(|error| anyhow!("WebP encoding failed for {mode:?}: {error:?}"))?;
+        let encode = start.map_or(Duration::ZERO, |start| start.elapsed());
+        let start = TIMED.then(Instant::now);
         // Decode and score even lossless. Hidden RGB may change at alpha=0.
-        let score = self
-            .score_webp(&encoded)
+        let decoded = self
+            .decode_webp(&encoded)
             .with_context(|| format!("cannot evaluate {mode:?} trial"))?;
-        Ok(Trial {
-            mode,
-            score,
-            bytes: encoded.to_vec(),
-        })
+        let decode = start.map_or(Duration::ZERO, |start| start.elapsed());
+        let start = TIMED.then(Instant::now);
+        let score = self
+            .metric
+            .score(&decoded)
+            .with_context(|| format!("cannot evaluate {mode:?} trial"))?;
+        let metric = start.map_or(Duration::ZERO, |start| start.elapsed());
+        drop(decoded);
+        Ok((
+            Trial {
+                mode,
+                score,
+                bytes: encoded.to_vec(),
+            },
+            EvaluationTimings {
+                encode,
+                decode,
+                metric,
+            },
+        ))
     }
 
     /// Decode a still WebP in memory and measure its actual pixels.
     ///
     /// Checks the header against the reference before allocating pixel buffers.
     pub fn score_webp(&self, bytes: &[u8]) -> Result<f64> {
+        self.metric.score(&self.decode_webp(bytes)?)
+    }
+
+    fn decode_webp(&self, bytes: &[u8]) -> Result<Pixels> {
         ensure!(!bytes.is_empty(), "WebP candidate contains no bytes");
         let mut decoder =
             WebPDecoder::new(Cursor::new(bytes)).context("cannot read WebP candidate header")?;
@@ -169,6 +211,6 @@ impl<'a> TrialEvaluator<'a> {
             }
             Pixels::Rgb(decoded.into_rgb8())
         };
-        self.metric.score(&pixels)
+        Ok(pixels)
     }
 }

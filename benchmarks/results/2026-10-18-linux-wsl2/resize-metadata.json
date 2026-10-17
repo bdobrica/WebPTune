@@ -1,0 +1,23 @@
+{
+  "platform": "Linux-6.18.54.1-microsoft-standard-WSL2-x86_64-with-glibc2.41",
+  "recorded_at_utc": "2026-10-17T21:03:23.820154+00:00",
+  "python": "3.13.5",
+  "cpu": "Intel(R) Core(TM) i5-9300H CPU @ 2.40GHz",
+  "logical_cpus": 8,
+  "rustc": "rustc 1.89.0 (29483883e 2025-08-04)\nbinary: rustc\ncommit-hash: 29483883eed69d5fb4db01964cdf2af4d86e9cb2\ncommit-date: 2025-08-04\nhost: x86_64-unknown-linux-gnu\nrelease: 1.89.0\nLLVM version: 20.1.7\n",
+  "threshold": 80,
+  "scale": 0.25,
+  "repeats": 1,
+  "memory_only": true,
+  "inputs_sha256": {
+    "icon-4000.png": "8494a680a8e999a8df13e5e97fd3879076a6afe5c1789cb677d1ecd192380e09",
+    "noisy-photo-4000.png": "0db162a0c004997bafb101314b3d15fcc2d07008741e5c2001ad44e0e2a38dc9",
+    "photo-4000.png": "10dae9495913ecbfc2a68cd4277a701a58d0a2e64f8e22fa078f40e2a24c3e99",
+    "transparent-art-4000.png": "84eeb0fe1e0784debb4e64db9196f808966af457d8dd2aac669e5e21ac76c26d"
+  },
+  "builds": {
+    "portable": {
+      "/mnt/c/Users/bdobr/OneDrive/Documents/GitHub/WebPTune/target/release/webp-ssim-optimizer": "f05a4441b123f71392583e4ccf1497b1c16dc9e8c7e96c433281a33add9bd9a8"
+    }
+  }
+}

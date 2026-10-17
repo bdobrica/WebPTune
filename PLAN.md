@@ -1,6 +1,6 @@
 # Implementation Plan — WebP SSIM Optimizer
 
-**Status:** Phases 0–6 implemented; phases 7–8 planned · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
+**Status:** Phases 0–6 implemented; Phase 7 local performance/robustness validated, macOS/Windows checks pending; Phase 8 planned · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
 
 ## 1. Purpose and scope
 
@@ -697,3 +697,62 @@ temporary directories, checks the complete filename sets, and compares every
 image byte with both runs and the committed corpus under the locked dependency
 versions. No external assets or new dependencies are needed; fixture provenance
 and the repository MIT license are recorded in `tests/fixtures/README.md`.
+
+## 19. Phase 7 performance and robustness
+
+`examples/benchmark.rs` generates photographic, noisy photographic, flat-color
+icon and alpha-art workloads and measures the production search. Optional
+`TrialEvaluator::evaluate_timed` shares the encoder, validated decoder and metric
+implementation with ordinary evaluation. Its const-generic timing switch avoids
+clock reads in ordinary evaluations. Regression tests compare timed and untimed
+bytes/scores, including RGB, RGBA, tiny and fully transparent inputs and invalid
+quality rejection.
+
+Stage measurements replay precisely the real search's tested qualities,
+including lossless. Scores/sizes must match the search and winner bytes must
+match exactly. A second comparison rebuilds the metric reference for each trial
+and verifies the same score. This measures reference caching without changing
+the production search policy or pretending to benchmark an exhaustive search.
+
+`scripts/benchmark.py` runs prebuilt portable/native binaries against the same
+hashed PNG inputs. It records CSV repetitions and platform/toolchain/executable
+metadata. A fresh CLI child measures complete conversion, staged replacement and
+peak RSS separately from the stage replay and cache experiment. Unix `wait4`
+provides per-child resource usage; the runner normalizes macOS RSS bytes to KiB
+and leaves RSS blank where unsupported. The developer harness needs Python,
+but the application has no new dependency.
+
+Corpus provenance, reproducible commands, measurement definitions, representative
+results and limitations are recorded in [benchmarks/README.md](benchmarks/README.md).
+The included NASA photograph is public domain, distinct from the project-authored
+MIT test fixtures. Above 512×512 it is upsampled; noise is added after resizing.
+
+Replacement coverage now includes preserving another hard link to an unrelated
+old destination on every platform. A Windows-specific test holds the destination
+open with read sharing but without delete sharing and requires replacement to
+fail without changing either file or leaving a staging file. That test is gated
+to Windows; Linux execution cannot validate it.
+
+Linux validation runs under WSL2. Windows PowerShell is callable, but no Windows
+Rust/C toolchain is available on PATH; no macOS runner is available. Windows and
+macOS execution, including their filesystem replacement semantics and Windows
+ACL behavior, remains explicitly unverified. Phase 7's cross-platform checkbox
+must stay open until those platforms actually run; Phase 8's CI matrix can
+provide those runs. Cross-compilation alone would not close this requirement.
+
+The [reviewed baseline](benchmarks/RESULTS.md) records 48 fresh portable/native
+CLI conversions across eight 256²/768² workloads, plus eight memory-only runs:
+four at 2000² and four 4000² sources scaled to 1000². It retains raw repetitions,
+input/source/executable hashes and toolchain metadata. Reference caching reduced
+metric work by about 1.46–1.67× including setup. Native CPU tuning improved
+transparent-art CLI medians by about 17–20%; other differences were only a few
+percent and are not treated as statistically established gains.
+
+The largest measured process RSS was about 669 MiB at full-scale 2000² RGBA;
+4000² RGBA scaled to 1000² reached about 324 MiB. These samples do not warrant
+tightening the existing 1 GiB estimate, which includes padded metric and resize
+buffers. The policy remains a guard, not a strict RSS cap or a guarantee for
+different inputs/platforms. Format, Clippy with denied warnings, all-target
+check, all 76 tests and portable/native release builds passed on Linux with
+locked/offline dependencies. The local performance/documentation gate is met;
+cross-platform execution remains open as described above.

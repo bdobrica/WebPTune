@@ -1,0 +1,31 @@
+{
+  "platform": "Linux-6.18.54.1-microsoft-standard-WSL2-x86_64-with-glibc2.41",
+  "recorded_at_utc": "2026-10-17T20:56:38.046765+00:00",
+  "python": "3.13.5",
+  "cpu": "Intel(R) Core(TM) i5-9300H CPU @ 2.40GHz",
+  "logical_cpus": 8,
+  "rustc": "rustc 1.89.0 (29483883e 2025-08-04)\nbinary: rustc\ncommit-hash: 29483883eed69d5fb4db01964cdf2af4d86e9cb2\ncommit-date: 2025-08-04\nhost: x86_64-unknown-linux-gnu\nrelease: 1.89.0\nLLVM version: 20.1.7\n",
+  "threshold": 80,
+  "scale": 1,
+  "repeats": 3,
+  "inputs_sha256": {
+    "icon-256.png": "2630396c1f68f52f2156b92d020801b2ef4838d74829cc02ca39be00d9915f9c",
+    "icon-768.png": "11c1d3bf42f8ea8b79be081b2476c7941ad046e32821a019643376b41e1d1f83",
+    "noisy-photo-256.png": "b89c91a070785c05699846fd9c2ea5c81372e274ba8561c8fcb7f9fe8e4bde2f",
+    "noisy-photo-768.png": "44b01d0e0cfaa202ddcc6446ac476ad1ca05e63bedc2aba17e0cfee7446de9e9",
+    "photo-256.png": "62efabbd6f2f555ef6cf7fa523e51b1d90f2f2c3433a6eb099487861407fd93c",
+    "photo-768.png": "827a0bf36639a91f5ee40c2c06333d513b1898c848b69ee06e7727facf063b49",
+    "transparent-art-256.png": "0d4268d24d967ed6a3f2f4f16b5d17c78d17716816b7b5883a10764bced08fdb",
+    "transparent-art-768.png": "78ce673a0d4e32a3bd53fb2e7343249c2756ee1b772cbae09ba27e61e07edf15"
+  },
+  "builds": {
+    "portable": {
+      "/mnt/c/Users/bdobr/OneDrive/Documents/GitHub/WebPTune/target/release/examples/benchmark": "13baaf396f0e7b5afb74c462a6bca23e83a7192043835ba71944326d7c6e49cf",
+      "/mnt/c/Users/bdobr/OneDrive/Documents/GitHub/WebPTune/target/release/webp-ssim-optimizer": "f05a4441b123f71392583e4ccf1497b1c16dc9e8c7e96c433281a33add9bd9a8"
+    },
+    "native": {
+      "/mnt/c/Users/bdobr/OneDrive/Documents/GitHub/WebPTune/target/native/release/examples/benchmark": "5ce7d65e3a9d507d232c2980783d85d75a0f7d488e53720bb10f4a9337fc6d81",
+      "/mnt/c/Users/bdobr/OneDrive/Documents/GitHub/WebPTune/target/native/release/webp-ssim-optimizer": "e20dad5c2acee508353280b9d5b85630b9478008a28b88f7d0196ce3651c8137"
+    }
+  }
+}

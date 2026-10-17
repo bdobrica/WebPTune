@@ -1,0 +1,23 @@
+{
+  "platform": "Linux-6.18.54.1-microsoft-standard-WSL2-x86_64-with-glibc2.41",
+  "recorded_at_utc": "2026-10-17T21:02:03.781575+00:00",
+  "python": "3.13.5",
+  "cpu": "Intel(R) Core(TM) i5-9300H CPU @ 2.40GHz",
+  "logical_cpus": 8,
+  "rustc": "rustc 1.89.0 (29483883e 2025-08-04)\nbinary: rustc\ncommit-hash: 29483883eed69d5fb4db01964cdf2af4d86e9cb2\ncommit-date: 2025-08-04\nhost: x86_64-unknown-linux-gnu\nrelease: 1.89.0\nLLVM version: 20.1.7\n",
+  "threshold": 80,
+  "scale": 1,
+  "repeats": 1,
+  "memory_only": true,
+  "inputs_sha256": {
+    "icon-2000.png": "16563ec116b5b8270f21fd5b6b8fa3971045dfe0417122dcab1c749801f73650",
+    "noisy-photo-2000.png": "50086d4f6c4a6f84018c727f8f73e3f42260ad992f73469136ddc895414f8e84",
+    "photo-2000.png": "20adc92c884a00aaa1583650b8d0eaebff687edf11269003468e537c9230745a",
+    "transparent-art-2000.png": "e58f4b24bb0eeb3ced37c7dcdb6e7589785ad11a02d2438db0d37fb4ec502331"
+  },
+  "builds": {
+    "portable": {
+      "/mnt/c/Users/bdobr/OneDrive/Documents/GitHub/WebPTune/target/release/webp-ssim-optimizer": "f05a4441b123f71392583e4ccf1497b1c16dc9e8c7e96c433281a33add9bd9a8"
+    }
+  }
+}
