@@ -1,7 +1,7 @@
 use clap::Parser;
 use webp_ssim_optimizer::cli::Args;
 use webp_ssim_optimizer::encoder::TrialEvaluator;
-use webp_ssim_optimizer::{input, search};
+use webp_ssim_optimizer::{input, output, search};
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
@@ -18,8 +18,9 @@ fn main() -> anyhow::Result<()> {
         }
     }
     let selected = result.candidate();
-    anyhow::bail!(
-        "Candidate selection passed: {}x{} -> {}x{} {}; selected {:?}, {} bytes, decoded SSIMULACRA2 score {:.6} >= threshold {}; {} measured trials; output is not implemented yet (Phase 5)",
+    output::write(&args, selected)?;
+    eprintln!(
+        "Wrote WebP: {}x{} -> {}x{} {}; selected {:?}, {} bytes, decoded SSIMULACRA2 score {:.6} >= threshold {}; {} measured trials",
         reference.original_dimensions().0,
         reference.original_dimensions().1,
         reference.pixels().dimensions().0,
@@ -31,4 +32,5 @@ fn main() -> anyhow::Result<()> {
         args.threshold,
         result.trials().len(),
     );
+    Ok(())
 }

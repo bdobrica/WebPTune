@@ -72,7 +72,7 @@ fn help_and_version_work_without_required_paths() {
                 "--verbose",
                 "[default: 80]",
                 "[default: 1.0]",
-                "conversion is pending",
+                "Existing destination files are replaced",
             ] {
                 assert!(stdout.contains(text), "{text:?} missing from {stdout}");
             }
@@ -101,18 +101,22 @@ fn required_arguments_and_unknown_options_fail() {
 }
 
 #[test]
-fn valid_arguments_reach_pending_pipeline_without_output() {
+fn valid_arguments_write_webp_and_replace_existing_destinations() {
     let fixture = Fixture::new();
     for extra in [
         vec![],
         vec!["-t", "100", "-s", "0.5", "-v"],
         vec!["--threshold", "0", "--scale", "1", "--verbose"],
     ] {
-        assert_failure(
-            &fixture.run(&fixture.output, &extra),
-            "Candidate selection passed",
-        );
-        assert!(!fixture.output.exists());
+        let result = fixture.run(&fixture.output, &extra);
+        assert!(result.status.success(), "{:?}", result.stderr);
+        assert!(result.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&result.stderr).contains("Wrote WebP"));
+        image::load_from_memory_with_format(
+            &fs::read(&fixture.output).unwrap(),
+            image::ImageFormat::WebP,
+        )
+        .unwrap();
     }
     // Short path flags must work at the executable boundary too.
     let output = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"))
@@ -122,14 +126,13 @@ fn valid_arguments_reach_pending_pipeline_without_output() {
         .arg(&fixture.output)
         .output()
         .unwrap();
-    assert_failure(&output, "Candidate selection passed");
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
     assert!(!String::from_utf8_lossy(&output.stderr).contains("Trial "));
     fs::write(&fixture.output, DESTINATION).unwrap();
-    assert_failure(
-        &fixture.run(&fixture.output, &[]),
-        "Candidate selection passed",
-    );
-    assert_eq!(fs::read(&fixture.output).unwrap(), DESTINATION);
+    assert!(fixture.run(&fixture.output, &[]).status.success());
+    assert_ne!(fs::read(&fixture.output).unwrap(), DESTINATION);
+    assert_eq!(fs::read_dir(fixture.dir.path()).unwrap().count(), 2);
     fixture.source_unchanged();
 }
 
@@ -257,10 +260,6 @@ fn invalid_output_directory_does_not_create_anything() {
 #[test]
 fn stdout_target_has_no_text_payload_on_failure() {
     let fixture = Fixture::new();
-    assert_failure(
-        &fixture.run(Path::new("-"), &[]),
-        "Candidate selection passed",
-    );
     assert_failure(&fixture.run(Path::new("-"), &["-s", "0"]), "scale must");
     assert!(!fixture.dir.path().join("-").exists());
     fixture.source_unchanged();
@@ -272,7 +271,12 @@ fn stdout_target_has_no_text_payload_on_failure() {
         .args(["-i", "./-", "-o", "./destination.webp"])
         .output()
         .unwrap();
-    assert_failure(&output, "Candidate selection passed");
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
     assert_eq!(fs::read(fixture.dir.path().join("-")).unwrap(), SOURCE);
-    assert!(!fixture.output.exists());
+    image::load_from_memory_with_format(
+        &fs::read(&fixture.output).unwrap(),
+        image::ImageFormat::WebP,
+    )
+    .unwrap();
 }

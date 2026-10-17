@@ -239,7 +239,7 @@ fn exif_orientation_is_deliberately_not_applied() {
 }
 
 #[test]
-fn cli_reports_prepared_dimensions_and_preserves_files() {
+fn cli_reports_prepared_dimensions_writes_webp_and_preserves_source() {
     let directory = tempdir().unwrap();
     let input = directory.path().join("input.png");
     let output = directory.path().join("output.webp");
@@ -254,11 +254,16 @@ fn cli_reports_prepared_dimensions_and_preserves_files() {
         .args(["-s", "0.5"])
         .output()
         .unwrap();
-    assert_eq!(result.status.code(), Some(1));
+    assert!(result.status.success());
     assert!(result.stdout.is_empty());
     assert!(String::from_utf8_lossy(&result.stderr).contains("17x11 -> 9x6 RGBA8"));
     assert_eq!(fs::read(&input).unwrap(), original);
-    assert_eq!(fs::read(&output).unwrap(), b"existing output");
+    let written =
+        image::load_from_memory_with_format(&fs::read(&output).unwrap(), image::ImageFormat::WebP)
+            .unwrap();
+    assert_eq!((written.width(), written.height()), (9, 6));
+    assert!(written.color().has_alpha());
+    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 2);
 }
 
 #[test]

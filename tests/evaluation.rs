@@ -276,7 +276,7 @@ fn transparent_reference_scores_opaque_candidates_with_actual_opaque_alpha() {
 }
 
 #[test]
-fn evaluator_keeps_source_and_files_unchanged_and_cli_reports_verbose_trials() {
+fn evaluator_preserves_source_and_cli_writes_selected_bytes_and_verbose_trials() {
     let directory = tempdir().unwrap();
     let input = directory.path().join("input.png");
     let output = directory.path().join("output.webp");
@@ -301,17 +301,24 @@ fn evaluator_keeps_source_and_files_unchanged_and_cli_reports_verbose_trials() {
             .args(["-s", "0.5", "-t", "100", "-v"])
             .output()
             .unwrap();
-        assert_eq!(result.status.code(), Some(1));
-        assert!(result.stdout.is_empty());
+        assert!(result.status.success());
+        if destination == std::ffi::OsStr::new("-") {
+            assert_eq!(result.stdout, selection.candidate().bytes());
+            assert_eq!(independent_score(prepared.pixels(), &result.stdout), 100.0);
+        } else {
+            assert!(result.stdout.is_empty());
+            let bytes = fs::read(&output).unwrap();
+            assert_eq!(bytes, selection.candidate().bytes());
+            assert_eq!(independent_score(prepared.pixels(), &bytes), 100.0);
+        }
         let stderr = String::from_utf8(result.stderr).unwrap();
         for expected in [
             "Lossy { quality: 0 }",
             "Lossy { quality: 100 }",
             "Lossless",
             "decoded SSIMULACRA2 score",
-            "Candidate selection passed",
+            "Wrote WebP",
             ">= threshold 100",
-            "Phase 5",
         ] {
             assert!(stderr.contains(expected), "{stderr}");
         }
@@ -331,7 +338,7 @@ fn evaluator_keeps_source_and_files_unchanged_and_cli_reports_verbose_trials() {
         }
     }
     assert_eq!(fs::read(&input).unwrap(), original);
-    assert_eq!(fs::read(&output).unwrap(), b"existing destination");
+    assert_eq!(fs::read(&output).unwrap(), selection.candidate().bytes());
     assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 2);
 }
 
@@ -426,5 +433,65 @@ fn minimum_search_budget_still_measures_both_endpoints_and_lossless() {
             independent_score(prepared.pixels(), result.candidate().bytes()),
             100.0
         );
+    }
+}
+
+#[test]
+fn file_and_stdout_match_selected_bytes_and_independent_scores() {
+    for (name, scale, threshold) in [
+        ("rgb.png", 1.0, 0.0),
+        ("rgb.png", 0.5, 80.0),
+        ("rgba.png", 1.0, 80.0),
+        ("tiny-rgba.png", 0.5, 100.0),
+    ] {
+        let directory = tempdir().unwrap();
+        let source = directory.path().join("input.png");
+        let destination = directory.path().join("output.webp");
+        let original = fs::read(fixture(name)).unwrap();
+        fs::write(&source, &original).unwrap();
+        let prepared = input::load(&source, scale).unwrap();
+        let selected =
+            search::search(&TrialEvaluator::new(prepared.pixels()).unwrap(), threshold).unwrap();
+        for verbose in [false, true] {
+            for target in [destination.as_os_str(), std::ffi::OsStr::new("-")] {
+                let mut command = Command::new(env!("CARGO_BIN_EXE_webp-ssim-optimizer"));
+                command.arg("-i").arg(&source).arg("-o").arg(target).args([
+                    "-s",
+                    &scale.to_string(),
+                    "-t",
+                    &threshold.to_string(),
+                ]);
+                if verbose {
+                    command.arg("-v");
+                }
+                let result = command.output().unwrap();
+                assert!(result.status.success(), "{:?}", result.stderr);
+                let bytes = if target == std::ffi::OsStr::new("-") {
+                    result.stdout
+                } else {
+                    assert!(result.stdout.is_empty());
+                    fs::read(&destination).unwrap()
+                };
+                assert_eq!(bytes, selected.candidate().bytes());
+                let score = independent_score(prepared.pixels(), &bytes);
+                assert_eq!(score, selected.candidate().score());
+                assert!(score >= threshold);
+                let stderr = String::from_utf8(result.stderr).unwrap();
+                assert_eq!(stderr.contains("Trial "), verbose);
+                assert!(stderr.contains(&format!("selected {:?}", selected.candidate().mode())));
+                assert!(stderr.contains(&format!("{} bytes", bytes.len())));
+                assert!(stderr.contains(&format!("score {:.6}", score)));
+                assert!(stderr.contains(&format!(
+                    "{}x{} -> {}x{}",
+                    prepared.original_dimensions().0,
+                    prepared.original_dimensions().1,
+                    prepared.pixels().dimensions().0,
+                    prepared.pixels().dimensions().1
+                )));
+                assert!(stderr.contains(&format!("{} measured trials", selected.trials().len())));
+                assert_eq!(fs::read(&source).unwrap(), original);
+                assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 2);
+            }
+        }
     }
 }

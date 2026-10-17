@@ -50,7 +50,7 @@ fn parse_scale(value: &str) -> std::result::Result<f64, String> {
 #[derive(Clone, Debug, Parser)]
 #[command(
     version,
-    after_help = "Examples:\n  webp-ssim-optimizer -i photo.png -o photo.webp -t 90 -s 0.5\n  webp-ssim-optimizer -i photo.png -o - > photo.webp\n\nPhase 4: preparation, scoring and bounded candidate selection are implemented. Image conversion is pending until output writing is implemented (Phase 5)."
+    after_help = "Examples:\n  webp-ssim-optimizer -i photo.png -o photo.webp -t 90 -s 0.5\n  webp-ssim-optimizer -i photo.png -o - > photo.webp\n\nExisting destination files are replaced only after the complete WebP is ready. The input file cannot be the destination. Reports go to stderr; '-o -' writes only WebP bytes to stdout."
 )]
 pub struct Args {
     /// Source still image (JPEG, PNG, WebP or BMP); stdin is not supported

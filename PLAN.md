@@ -1,6 +1,6 @@
 # Implementation Plan — WebP SSIM Optimizer
 
-**Status:** Phases 0–4 implemented; phases 5–8 planned · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
+**Status:** Phases 0–5 implemented; phases 6–8 planned · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
 
 ## 1. Purpose and scope
 
@@ -155,13 +155,13 @@ rust-version = "1.89"
 clap = { version = "~4.5", features = ["derive"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp"] }
 same-file = "1"
+tempfile = "3"
 webp = { version = "0.3", default-features = false }
 fast-ssim2 = "0.9"
 anyhow = "1"
 
 [dev-dependencies]
 png = "0.18"
-tempfile = "3"
 ```
 
 Phase 0 uses `anyhow` for prototype and CLI errors; typed library errors can be introduced with the application pipeline. Clap stays in the 4.5 family. Disabling `webp`'s default `img` feature avoids enabling additional `image` codecs transitively; the spike uses raw RGB/RGBA buffers. The MSRV and pinned development toolchain are Rust 1.89. CI should eventually test that version and stable.
@@ -169,6 +169,7 @@ Phase 0 uses `anyhow` for prototype and CLI errors; typed library errors can be 
 Phase 1 adds `same-file` for portable file-identity checks (including hard links)
 and `tempfile` for isolated filesystem integration tests.
 Phase 2 uses `png` as a development dependency to generate real APNG fixtures.
+Phase 5 promotes the existing `tempfile` dependency to production for staged output.
 
 API checkpoints:
 
@@ -390,7 +391,7 @@ This catches relative, symlink and hard-link aliases. Dangling output symlinks
 are rejected; a missing destination requires an existing parent directory. No
 output or parent is created or truncated. Existing output identity must be
 readable for the conservative collision check. Filesystem changes after this
-check remain possible; Phase 5 must revalidate and use safe replacement.
+check remain possible; Phase 5 revalidates and uses staged replacement.
 Literal stdin input `-` is rejected (use `./-` for a file named `-`).
 
 `src/limits.rs` establishes reusable, allocation-free checks:
@@ -414,20 +415,21 @@ large decode allocations and the combined guard before resize/metric allocation,
 and configure decoder allocation limits. Phase 7 will measure and refine it.
 The guard functions are tested now; Phase 1 does not decode image headers.
 
-Clap help/version exit 0; argument errors exit 2. Path errors and the explicit
-pending-conversion error exit 1, with empty stdout and diagnostics on stderr.
-Valid requests intentionally fail until Phases 2–5 supply the image pipeline.
+Clap help/version exit 0; argument errors exit 2. Path errors exit 1, with empty
+stdout and diagnostics on stderr. Phase 1 used an explicit pending-conversion
+error for valid requests; phases 2–5 now supply the complete image pipeline.
 Integration tests prove no output is created and existing files are preserved
-for validation failures and pending-pipeline requests. Unix symlink/non-UTF-8
+for validation failures. Unix symlink/non-UTF-8
 cases are conditional tests; macOS/Windows execution remains a Phase 7 task.
 
 ## 14. Phase 2 image preparation decisions
 
 `input::load(path, scale)` now returns an owned `PreparedImage`, preserving source
 dimensions alongside typed packed `Pixels::Rgb` or `Pixels::Rgba` reference data.
-The CLI invokes it after path validation. It then reports prepared dimensions and
-layout in a pending-optimization error; phases 3–5 still supply scoring, search
-and output. No destination is created or opened for writing during preparation.
+The CLI invokes it after path validation. Phase 2 initially reported prepared
+dimensions and layout in a pending-optimization error; phases 3–5 now supply
+scoring, search and output. No destination is created or opened for writing
+during preparation.
 
 ### Decode and validation
 
@@ -523,7 +525,7 @@ bytes. It makes no threshold or ordering decision. The evaluator writes no files
 and retains no collection of past trials. Phase 3 exercised lossy quality 75 and
 lossless as two CLI pipeline checks. Phase 4 replaces those checks with bounded
 search and selection, retaining only the best bytes and numeric summaries.
-Output writing remains Phase 5.
+Phase 5 writes the selected candidate.
 
 Integration tests independently decode trial bytes with the image convenience
 API, construct separate pixel views and call the one-shot
@@ -576,11 +578,9 @@ thresholds or budgets fail before evaluation. Encoder/decoder/metric errors
 abort with mode context and their original cause, rather than becoming failed
 quality scores; an earlier evaluation error also aborts before later trials.
 
-The CLI now applies `--threshold` during search, prints numeric trial history
-with `--verbose`, and reports the selected mode, size, measured score, prepared
-dimensions and trial count on stderr in a pending-output error. It still exits
-nonzero and writes nothing until Phase 5 implements output. Input and existing
-destinations are preserved for both file and stdout targets.
+The CLI applies `--threshold` during search and prints numeric trial history
+with `--verbose`. Phase 4 initially reported selection in a pending-output error;
+Phase 5 replaces that error with writing and a success report on stderr.
 
 Unit tests cover exact threshold equality, negative scores, lossless being
 smaller, no feasible candidate, nonmonotonic curves, all 101 monotonic boundary
@@ -590,4 +590,61 @@ fixtures at scales 1 and 0.5 and thresholds 0/80/90/100 verify selected bytes
 through independent decoding and the one-shot metric. Re-evaluation verifies
 every numeric summary; selection is compared against every tested feasible
 trial, including ties. CLI tests verify verbose history, threshold application,
-empty stdout and unchanged source/destination files. No dependencies were added.
+source preservation and stdout hygiene. No dependencies were added in Phase 4.
+
+## 17. Phase 5 output and reporting
+
+`output::write` accepts the selected `Candidate`, whose private fields and
+immutable byte access preserve the evaluator's validation: nonempty still WebP,
+successful pixel decoding, checked dimensions and a finite measured score.
+It checks nonempty bytes and threshold feasibility at the output boundary.
+No extra decode or metric comparison is needed; the exact measured bytes are
+written, without re-encoding or metadata changes. Invalid or infeasible trials
+cannot be constructed through the production public API and written silently.
+
+For `-o -`, stdout is locked for `write_all` and an explicit flush. All progress,
+success reports and errors use stderr. Broken pipe, short-write exhaustion and
+flush errors propagate to the CLI's nonzero exit. Partial stdout writes cannot
+be rolled back. Shell redirection opens/truncates its own target before the
+program starts; use `-o path` for safe replacement of an existing destination.
+
+For file output, the existing `tempfile` dependency is promoted from development
+to production; no new package or lockfile resolution is required. A
+`NamedTempFile` is created in the destination's existing parent directory, then
+written with `write_all`, flushed and `sync_all`ed. Collision validation runs
+before staging and again immediately before `persist`. Source and destination
+are never opened with truncation. All failure paths drop the temporary file,
+including extracting the I/O error from `PersistError` so its owned staging file
+is cleaned up. Cleanup on drop is best effort if the filesystem itself refuses
+removal; abrupt process termination can also leave a staging file.
+
+**Overwrite policy:** replace an existing unrelated destination only once the
+complete output is ready. `persist` performs same-directory rename/replace
+(Unix `rename`; Windows `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING` in the
+locked dependency). No delete-first fallback is used. Input canonical/symlink/
+hard-link aliases and dangling output symlinks are rejected. An unrelated
+destination symlink is replaced as a directory entry, leaving its referent
+untouched; a destination with other hard links likewise receives a new file
+without changing the other links. Replacement creates a new file and does not
+preserve the previous file's ownership, permissions or metadata. Unix temporary
+file permissions normally result in mode `0600` for both new and replaced files.
+
+Contents are synced before replacement, but the parent directory is not synced;
+this is not a power-loss durability guarantee. Same-directory replacement relies
+on OS/filesystem semantics; Linux tests pass, with Windows/macOS execution still
+required in Phase 7. Filesystem manipulation after the final path check remains
+a race; path validation is not a guarantee against adversarial concurrent changes.
+
+The CLI exits zero only after the output operation succeeds. Its stderr success
+summary includes selected mode, quality for lossy, decoded score, threshold,
+original/processed dimensions, RGB/RGBA layout, bytes and measured trial count.
+`--verbose` adds all trial summaries. Successful file output leaves stdout empty;
+successful stdout output contains exactly the selected candidate's bytes.
+
+Tests compare file and stdout output with real selected candidates, independently
+decode and score the written payloads, and check all summary fields with and
+without verbose mode. Coverage includes RGB/RGBA, resizing, tiny images and
+thresholds 0/80/100. Focused I/O tests verify staged replacement, short/interrupted
+writes, injected partial disk-full and deferred flush errors, cleanup on failed
+rename, collision revalidation and a real Unix broken stdout connection.
+An unrelated symlink test verifies entry replacement and referent preservation.

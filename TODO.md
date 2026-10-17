@@ -41,7 +41,7 @@ and `cargo test --all-targets --locked` (nine unit tests, ten CLI integration
 tests, and five Phase 0 prototype tests on Linux).
 Phase 1 established argument/path validation and a pending-pipeline error without
 output. Phase 2 connects the reusable header and processing limits to
-decoding/resizing; phases 3–4 supply scoring and selection. Output remains pending.
+decoding/resizing; phases 3–4 supply scoring and selection, and Phase 5 writes output.
 See [PLAN.md, section 13](PLAN.md#13-phase-1-cli-and-validation-decisions).
 
 ## Phase 2 — Decode, normalize and resize (M1)
@@ -62,9 +62,9 @@ Validation: Rust 1.89.0 `cargo check --all-targets --locked`,
 and `cargo test --all-targets --locked` (eleven unit tests, twenty-two integration
 tests and five Phase 0 prototype tests on Linux).
 
-Phase 2 connected reference preparation to the CLI; phases 3–4 now evaluate and
-select candidates before reporting that output remains pending. It creates no output
-and preserves any existing destination. Input tests cover supported formats, alpha/opaque layouts,
+Phase 2 connected reference preparation to the CLI; phases 3–4 evaluate and
+select candidates and Phase 5 writes the winner. Preparation itself creates no
+output. Input tests cover supported formats, alpha/opaque layouts,
 rounded and tiny scales, premultiplied-alpha filtering, animation rejection,
 header limits, malformed data, grayscale/16-bit conversion and explicit EXIF
 behavior. The committed synthetic fixtures have a reproducible generator and
@@ -95,8 +95,8 @@ lossy quality, lossless, alpha semantics, malformed/animated candidates,
 dimension/layout errors and non-finite scores. An independent decoder and the
 one-shot metric API verify trial scores for all supported formats, scales and
 tiny/transparent images. Phase 3 exercised quality 75 and lossless as CLI pipeline
-checks; Phase 4 replaces these with threshold-based search and selection. Writing
-remains pending. See [PLAN.md, section 15](PLAN.md#15-phase-3-metric-and-trial-evaluation).
+checks; Phase 4 replaces these with threshold-based search and selection, and
+Phase 5 writes the winner. See [PLAN.md, section 15](PLAN.md#15-phase-3-metric-and-trial-evaluation).
 
 ## Phase 4 — Search and selection (M3)
 
@@ -124,20 +124,41 @@ tests independently score selected bytes and compare them with every tested
 feasible trial. Synthetic tests cover all 101 monotonic boundary positions,
 nonmonotonic scores/sizes, missed untested qualities, exact thresholds, ties,
 deduplication, budget limits and evaluator failures. The CLI now enforces the
-threshold during selection, then exits nonzero without writing until Phase 5.
+threshold during selection; Phase 5 adds successful output writing.
 See [PLAN.md, section 16](PLAN.md#16-phase-4-search-and-selection).
 
 ## Phase 5 — Output and reporting (M4)
 
-- [ ] Verify candidate WebP bytes are nonempty and valid before writing.
-- [ ] For `-o -`, `write_all` raw bytes to locked stdout; all human messages go to stderr.
-- [ ] For file output, use a same-directory temporary file followed by safe rename/replace; implement cleanup on errors.
-- [ ] Do not truncate source or existing destination prematurely; explicitly decide overwrite behavior.
-- [ ] Handle broken pipe and insufficient disk space as nonzero failures.
-- [ ] Print mode, quality (if lossy), score, dimensions, byte count and trial count to stderr (`--verbose` for detailed trials).
-- [ ] Add tests that stdout bytes are WebP and no diagnostics leak into stdout.
+- [x] Verify candidate WebP bytes are nonempty and valid before writing.
+- [x] For `-o -`, `write_all` raw bytes to locked stdout; all human messages go to stderr.
+- [x] For file output, use a same-directory temporary file followed by safe rename/replace; implement cleanup on errors.
+- [x] Do not truncate source or existing destination prematurely; explicitly decide overwrite behavior.
+- [x] Handle broken pipe and insufficient disk space as nonzero failures.
+- [x] Print mode, quality (if lossy), score, dimensions, byte count and trial count to stderr (`--verbose` for detailed trials).
+- [x] Add tests that stdout bytes are WebP and no diagnostics leak into stdout.
 
 **Gate:** output path and stdout both produce the selected, independently verifiable bytes.
+
+Validation: Rust 1.89.0 `cargo check --all-targets --locked --offline`,
+`cargo fmt --all -- --check`,
+`cargo clippy --all-targets --locked --offline -- -D warnings`, and
+`cargo test --all-targets --locked --offline` (thirty unit tests, thirty-six
+integration tests and five Phase 0 prototype tests on Linux; 71 total).
+
+Output accepts only immutable, decoded-and-scored candidate bytes and checks
+nonempty payload/threshold feasibility before writing. File output stages beside
+the destination, flushes/syncs, revalidates path collisions, then replaces the
+destination using `tempfile::NamedTempFile::persist`. Existing destinations are
+overwritten only at replacement; unrelated symlink entries are replaced without
+changing their referents. Staging files are dropped on failure. Stdout is locked,
+written with `write_all`, and flushed; diagnostics stay on stderr.
+
+Tests independently decode and score file/stdout bytes, compare them exactly
+with the selected candidate, and check summaries and verbose history. Failure
+coverage includes injected partial disk-full/flush errors, late hard-link
+collisions, failed rename cleanup and a real broken stdout connection on Unix.
+See [PLAN.md, section 17](PLAN.md#17-phase-5-output-and-reporting) for overwrite,
+permissions, durability and platform limits.
 
 ## Phase 6 — Functional/integration tests (M5)
 
