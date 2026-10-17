@@ -57,11 +57,19 @@ fn parse_dimension(value: &str) -> std::result::Result<u32, String> {
         .ok_or_else(|| format!("dimension must be an integer in [1, {}]", u32::MAX))
 }
 
+fn parse_max_bytes(value: &str) -> std::result::Result<u64, String> {
+    value
+        .parse::<u64>()
+        .ok()
+        .filter(|&bytes| bytes > 0)
+        .ok_or_else(|| format!("byte limit must be an integer in [1, {}]", u64::MAX))
+}
+
 /// Convert a still image to WebP with a minimum SSIMULACRA2 score.
 #[derive(Clone, Debug, Parser)]
 #[command(
     version,
-    after_help = "Examples:\n  webptune -i photo.png -o photo.webp -t 90 -s 0.5\n  webptune -i photo.png -o photo.webp --scale-width 1920 --scale-height 1080\n  webptune -i photo.png -o photo.webp --search exhaustive -t 90\n  webptune -i photo.png -o - > photo.webp\n\nDimension bounds preserve aspect ratio (rounded to whole pixels) without cropping, stretching or upscaling. Use either bound or both, as an alternative to --scale.\n\nExhaustive search evaluates all integer lossy qualities 0 through 100 plus lossless. It guarantees the smallest feasible result only within this fixed set at the current encoder settings, and takes more work than the default heuristic.\n\nExisting destination files are replaced only after the complete WebP is ready. The input file cannot be the destination. Reports go to stderr; '-o -' writes only WebP bytes to stdout."
+    after_help = "Examples:\n  webptune -i photo.png -o photo.webp -t 90 -s 0.5\n  webptune -i photo.png -o photo.webp --scale-width 1920 --scale-height 1080\n  webptune -i photo.png -o photo.webp --search exhaustive -t 90\n  webptune -i photo.png -o photo.webp --max-bytes 100000 --skip-if-larger --quiet\n  webptune -i photo.png -o - > photo.webp\n\nDimension bounds preserve aspect ratio (rounded to whole pixels) without cropping, stretching or upscaling. Use either bound or both, as an alternative to --scale.\n\nExhaustive search evaluates all integer lossy qualities 0 through 100 plus lossless. It guarantees the smallest feasible result only within this fixed set at the current encoder settings, and takes more work than the default heuristic.\n\n--max-bytes accepts a positive integer byte count and never relaxes the quality threshold. If no tested feasible result fits, it fails before writing. --skip-if-larger skips only results strictly larger than the source file, exits successfully and leaves the destination untouched (stdout is empty). Equal sizes are written. A failing byte cap takes priority over skipping. Quiet and verbose conflict; quiet keeps errors visible.\n\nExisting destination files are replaced only after the complete WebP is ready. The input file cannot be the destination. Reports go to stderr; '-o -' writes only WebP bytes to stdout. Shell redirection may truncate its target even when output is skipped."
 )]
 pub struct Args {
     /// Source still image (JPEG, PNG, WebP or BMP); stdin is not supported
@@ -91,6 +99,18 @@ pub struct Args {
     /// Search strategy; exhaustive finds the smallest feasible of 102 fixed candidates
     #[arg(long, value_enum, default_value = "heuristic", value_name = "MODE")]
     pub search: SearchMode,
+
+    /// Succeed without writing if the selected WebP is strictly larger than the input file
+    #[arg(long)]
+    pub skip_if_larger: bool,
+
+    /// Maximum encoded WebP bytes; fail without writing if no tested feasible result fits
+    #[arg(long, value_name = "BYTES", value_parser = parse_max_bytes, allow_hyphen_values = true)]
+    pub max_bytes: Option<u64>,
+
+    /// Suppress success/skip reports; errors remain on stderr
+    #[arg(short, long, conflicts_with = "verbose")]
+    pub quiet: bool,
 
     /// Print detailed progress and trial diagnostics to stderr
     #[arg(short, long)]
@@ -217,11 +237,56 @@ mod tests {
         assert_eq!(args.scale_width, None);
         assert_eq!(args.scale_height, None);
         assert_eq!(args.search, SearchMode::Heuristic);
+        assert!(!args.skip_if_larger);
+        assert_eq!(args.max_bytes, None);
+        assert!(!args.quiet);
         assert!(!args.verbose);
         let args = parse(&["-t", "90", "-s", "0.5", "-v"]).unwrap();
         assert_eq!(args.threshold, 90.0);
         assert_eq!(args.scale, 0.5);
         assert!(args.verbose);
+    }
+
+    #[test]
+    fn size_policy_and_quiet_options() {
+        let args = parse(&["--skip-if-larger", "--max-bytes", "123", "-q"]).unwrap();
+        assert!(args.skip_if_larger);
+        assert_eq!(args.max_bytes, Some(123));
+        assert!(args.quiet);
+        assert!(parse(&["--quiet"]).unwrap().quiet);
+        assert_eq!(parse(&["--max-bytes=1"]).unwrap().max_bytes, Some(1));
+        assert_eq!(
+            parse(&["--max-bytes", &u64::MAX.to_string()])
+                .unwrap()
+                .max_bytes,
+            Some(u64::MAX)
+        );
+        for flags in [["-q", "-v"], ["--verbose", "--quiet"]] {
+            assert_eq!(
+                parse(&flags).unwrap_err().kind(),
+                clap::error::ErrorKind::ArgumentConflict
+            );
+        }
+    }
+
+    #[test]
+    fn byte_limit_rejects_zero_nonintegers_and_overflow() {
+        for value in [
+            "0",
+            "-1",
+            "1.5",
+            "NaN",
+            "inf",
+            "1e3",
+            "1KiB",
+            "18446744073709551616",
+            "",
+        ] {
+            let error = parse(&["--max-bytes", value]).unwrap_err();
+            assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
+            assert!(error.to_string().contains("byte limit must be an integer"));
+        }
+        assert!(parse(&["--max-bytes"]).is_err());
     }
 
     #[test]

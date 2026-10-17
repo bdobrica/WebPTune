@@ -18,7 +18,18 @@ fn main() -> anyhow::Result<()> {
         }
     }
     let selected = result.candidate();
-    output::write(&args, selected)?;
+    let outcome = output::write(&args, selected)?;
+    if args.quiet {
+        return Ok(());
+    }
+    if let output::WriteOutcome::Skipped { input_bytes } = outcome {
+        eprintln!(
+            "Skipped WebP: selected {:?}, {} bytes > input {} bytes; no output written; decoded SSIMULACRA2 score {:.6} >= threshold {}; {} measured trials",
+            selected.mode(), selected.size(), input_bytes, selected.score(), args.threshold,
+            result.trials().len(),
+        );
+        return Ok(());
+    }
     eprintln!(
         "Wrote WebP: {}x{} -> {}x{} {}; selected {:?}, {} bytes, decoded SSIMULACRA2 score {:.6} >= threshold {}; {} measured trials",
         reference.original_dimensions().0,

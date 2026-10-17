@@ -1,6 +1,6 @@
 # Implementation Plan — webptune
 
-**Status:** Phases 0–6 implemented; Phase 7 local performance/robustness validated, macOS/Windows checks pending; Phase 8 documentation/CI implemented, hosted validation and tag pending; Phase 9 maximum-dimension resizing and exhaustive search implemented · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
+**Status:** Phases 0–6 implemented; Phase 7 local performance/robustness validated, macOS/Windows checks pending; Phase 8 documentation/CI implemented, hosted validation and tag pending; Phase 9 maximum-dimension resizing, exhaustive search, size policies and quiet mode implemented · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
 
 ## 1. Purpose and scope
 
@@ -91,6 +91,9 @@ struct Options {
     scale_width: Option<u32>,
     scale_height: Option<u32>,
     search: SearchMode,
+    skip_if_larger: bool,
+    max_bytes: Option<u64>,
+    quiet: bool,
     verbose: bool,
 }
 
@@ -125,15 +128,19 @@ webptune \
   [--threshold 80] \
   [--scale 1.0 | --scale-width PIXELS [--scale-height PIXELS] | --scale-height PIXELS] \
   [--search heuristic|exhaustive] \
-  [--verbose]
+  [--skip-if-larger] [--max-bytes BYTES] \
+  [--verbose | --quiet]
 ```
 
-Short flags: `-i`, `-o`, `-t`, `-s`, `-v`. Input and output are required for v0.1. `--help` and `--version` are provided by clap.
+Short flags: `-i`, `-o`, `-t`, `-s`, `-v`, `-q`. Input and output are required for v0.1. `--help` and `--version` are provided by clap.
 
 Validation:
 
 - `threshold`: finite numeric value `0..=100`; reject NaN, infinities, and out-of-range values.
 - `search`: `heuristic` (default) or `exhaustive`; reject unknown or missing modes. Exhaustive mode evaluates all 102 fixed candidates before selecting, unless an evaluation fails.
+- `max-bytes`: positive `u64` integer byte count, inclusive. Reject zero, fractions, units, overflow and missing values. A selected result over the cap fails without output and without lowering the threshold.
+- `skip-if-larger`: successful no-output outcome when selected bytes are strictly larger than the source file, with equal sizes written. A byte-cap failure takes priority. See section 23.
+- `quiet`: suppress successful write/skip reports, retain errors; conflicts with `verbose`.
 - `scale`: finite numeric value `(0,1]`; reject zero, negative, >1, NaN, infinity.
 - `scale-width`/`scale-height`: positive `u32` maximum dimensions; either or both may be supplied. Reject combination with an explicit `--scale`, including `-s 1`. Fit to the tightest bound without upscaling, preserving aspect ratio with nearest-pixel rounding (minimum one pixel per axis). See section 21 for implementation details.
 - `input`: exists, readable, supported format, valid decoded dimensions.
@@ -144,6 +151,7 @@ Validation:
 Terminal behavior:
 
 - File output: write report to stderr if verbose; brief success summary to stderr by default is acceptable.
+- Skips: report on stderr and exit zero without output; quiet suppresses this and the normal write summary.
 - Stdout: **only WebP bytes** on stdout. Help and errors are never mixed with image payload.
 - Exit `0` on success, nonzero on invalid arguments, unreadable input, failed encoder/decoder/metric, no feasible candidate, or write errors. Define stable symbolic error categories; exact numeric codes can be assigned in implementation.
 
@@ -297,12 +305,12 @@ Measure total wall time, peak RSS, number of trial encodes, encoding time, decod
 | Encoder panic or invalid data | CLI crash | Checked encoding API, error handling, malformed-file tests |
 | Decoder and encoder version drift | Build failure or changed output | Cargo.lock, API spike, CI, stable test tolerances |
 | Cross-platform file replacement | Data loss / unexpected behavior | Temp file in same directory, safe overwrite policy, Windows tests |
-| Tool creates larger output | Surprising users | Report original/output size; optional future `--skip-if-larger` (not in v0.1) |
+| Tool creates larger output | Surprising users | Optional `--skip-if-larger` preserves the destination and reports skipped/source sizes; `--max-bytes` enforces a hard ceiling |
 
 ## 10. Post-v0.1 roadmap (optional)
 
 1. `--search heuristic|exhaustive` is implemented (section 22), with a minimum across the *fixed discrete candidate set* for exhaustive search. Additional intermediate search strategies remain optional future work.
-2. `--max-bytes`, `--skip-if-larger`, quiet/JSON reports, and stdin input.
+2. `--max-bytes`, `--skip-if-larger` and quiet reports are implemented (section 23). JSON reports and stdin input remain optional future work.
 3. Batch processing and parallel files, with explicit memory/concurrency caps.
 4. Preserve ICC/EXIF orientation and add color-managed / 16-bit paths.
 5. Advanced WebP parameters and alpha-quality tuning; support animation as a separate workflow.
@@ -647,11 +655,13 @@ on OS/filesystem semantics; Linux tests pass, with Windows/macOS execution still
 required in Phase 7. Filesystem manipulation after the final path check remains
 a race; path validation is not a guarantee against adversarial concurrent changes.
 
-The CLI exits zero only after the output operation succeeds. Its stderr success
+The CLI exits zero after the output operation succeeds, including an explicit
+size-based skip introduced in Phase 9 (section 23). Its stderr success
 summary includes selected mode, quality for lossy, decoded score, threshold,
 original/processed dimensions, RGB/RGBA layout, bytes and measured trial count.
-`--verbose` adds all trial summaries. Successful file output leaves stdout empty;
-successful stdout output contains exactly the selected candidate's bytes.
+`--verbose` adds all trial summaries; `--quiet` suppresses success/skip reports.
+Successful file output leaves stdout empty; successful stdout output contains
+exactly the selected candidate's bytes unless skipped (empty stdout).
 
 Tests compare file and stdout output with real selected candidates, independently
 decode and score the written payloads, and check all summary fields with and
@@ -928,3 +938,57 @@ all 92 tests, locked/offline release build and independent release smoke checks
 passed. Actual release exhaustive file/stdout conversions also passed with
 102 reported trials and identical payloads. CI's existing all-target tests
 include the new coverage; native hosted macOS/Windows execution remains pending.
+
+## 23. Phase 9 — Size policies and quiet mode
+
+The CLI accepts `--max-bytes BYTES`, `--skip-if-larger` and `-q`/`--quiet`.
+This implements the roadmap item's quiet-mode alternative; JSON reporting is
+still deferred. There are no new dependencies or encoder settings.
+
+`--max-bytes` is an inclusive positive `u64` byte ceiling. It accepts plain
+integers up to `18446744073709551615`, rejecting zero, fractions, units, overflow
+and missing values before loading input. Search still chooses the smallest
+tested candidate meeting the exact quality threshold. Because selection already
+minimizes bytes, checking this winner against the cap is equivalent to filtering
+all tested feasible candidates by size. No quality relaxation, resizing retry
+or additional search is performed. Exceeding the cap returns exit `1` with the
+selected size and cap, before staging or writing stdout. Heuristic failure
+concerns only its tested candidates; exhaustive failure covers the fixed set.
+
+`--skip-if-larger` compares selected bytes with the source file's current byte
+length at the output decision. This includes source metadata and uses the same
+comparison even after resizing. Strictly larger results produce a successful
+skip (exit `0`), while equal or smaller results are written normally. A skip
+creates no temporary or destination file, preserves an existing destination,
+and writes nothing to stdout. It does not copy the source to the destination or
+stdout. Path validation and threshold/byte-cap errors still fail; in particular,
+a cap failure takes priority over a skip. Concurrent input mutation remains
+outside the existing filesystem-race guarantees.
+
+`output::write` now returns `WriteOutcome::Written` or
+`WriteOutcome::Skipped { input_bytes }`. It enforces these policies for library
+callers too, including rejecting a zero cap. Existing staged replacement,
+collision checks and stdout write/flush handling apply to actual writes.
+The CLI emits either the usual `Wrote WebP` summary or a `Skipped WebP` summary
+with selected/input byte counts, mode, score, threshold and measured trial count.
+Verbose mode retains its complete trial history even on a skip. Quiet conflicts
+with verbose and suppresses success/skip reports while preserving errors,
+explicit help/version, exit codes and payloads. Skipped `-o -` has empty stdout;
+shell redirection can still create/truncate a target before the program runs.
+
+Unit tests exercise parsing/defaults, invalid caps and quiet/verbose conflicts;
+the output boundary covers caps below/equal/above the selected size, `u64::MAX`,
+strict skip equality, existing/absent destinations, no staging leftovers and
+quality/cap/path failure precedence. Executable policy tests cover both search
+modes and output routes, independently scored RGB and resized RGBA, exact-cap
+payload equality, a real recompression that grows, skip diagnostics, quiet
+success/skip behavior, retained runtime/parse errors and source preservation.
+The existing CI all-target test command includes this coverage.
+
+Local Linux validation (Rust 1.89.0): formatting, Clippy with denied warnings,
+all 101 tests, locked/offline release build and the independent RGB/RGBA release
+smoke checker passed. Additional release checks exercised both search modes:
+an exact 52-byte cap, rejected smaller caps without output, a 70-to-304-byte
+recompression skipped without destination changes, equal-size writes, quiet
+payload equality, visible errors, skip/cap precedence and no staging leftovers.
+Native hosted macOS/Windows validation remains pending.

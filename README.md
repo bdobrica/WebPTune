@@ -40,6 +40,7 @@ source: the shell opens it before the application starts.
 
 - JPEG, PNG, WebP and BMP still-image input.
 - WebP output in either lossy or lossless mode.
+- Optional byte ceiling and skipping of results larger than the source file.
 - Perceptual quality target via native SSIMULACRA2 score (`0..100`, default `80`).
 - Optional Lanczos3 downscaling by a multiplier or maximum width/height.
 - Transparency-aware evaluation and alpha preservation.
@@ -107,6 +108,9 @@ webptune --input INPUT --output OUTPUT [OPTIONS]
 | `--scale-width <PIXELS>` | Maximum output width, preserving aspect ratio; alternative to `--scale` | Unbounded |
 | `--scale-height <PIXELS>` | Maximum output height, preserving aspect ratio; alternative to `--scale` | Unbounded |
 | `--search <MODE>` | `heuristic` (bounded search) or `exhaustive` (all 102 fixed candidates) | `heuristic` |
+| `--skip-if-larger` | Skip writing when the selected WebP is strictly larger than the input file | Off |
+| `--max-bytes <BYTES>` | Inclusive positive integer byte ceiling; fail if the smallest tested feasible result exceeds it | Unlimited |
+| `-q, --quiet` | Suppress success/skip reports; retain errors; conflicts with verbose | Off |
 | `-v, --verbose` | Detailed progress and trial diagnostics on stderr | Off |
 | `-h, --help` | Print help | — |
 | `-V, --version` | Print version | — |
@@ -161,6 +165,40 @@ synced to a temporary file in the same directory. The destination directory must
 already exist. Input aliases are refused. Output `./-` writes a file named `-`;
 only the exact value `-` selects stdout.
 
+Example: require at most 100,000 bytes without lowering the quality target:
+
+```bash
+webptune -i photo.png -o photo.webp --threshold 90 --max-bytes 100000
+```
+
+`--max-bytes` accepts a positive integer through `18446744073709551615`, in
+bytes (no units or fractions). The limit is inclusive: an exactly equal result
+is written. If the smallest tested feasible candidate exceeds it, the command
+exits `1` without creating/replacing a file or writing stdout. The threshold is
+never lowered, and search performs its usual trials. Heuristic failure concerns
+only tested candidates; `--search exhaustive` checks the complete fixed set.
+
+Example: keep the destination untouched when conversion would increase file size:
+
+```bash
+webptune -i photo.jpg -o photo.webp --skip-if-larger
+webptune -i photo.jpg -o photo.webp --skip-if-larger --quiet
+```
+
+`--skip-if-larger` compares the selected payload against the source file's byte
+length at the output decision, including any source metadata, even when resizing.
+A strictly larger result exits `0` with a `Skipped WebP` report on stderr and no
+output. Equal sizes are written. Existing destinations remain untouched; absent
+destinations stay absent. With `-o -`, a skip produces **empty stdout**, not a
+WebP image or a copy of the source. Shell redirection can still create/truncate
+its own target; use `-o path` when preservation matters. Validation, quality and
+byte-limit failures take priority over skipping and still exit nonzero.
+
+`-q`/`--quiet` suppresses success and skip reports, keeping error diagnostics on
+stderr and the same exit codes and output bytes. It conflicts with `--verbose`.
+It does not suppress explicit help/version output. JSON reporting remains a
+possible future enhancement.
+
 ## How quality scoring works
 
 1. Decode the source still image.
@@ -169,7 +207,7 @@ only the exact value `-` selects stdout.
 4. Try several lossy WebP encoder qualities, decoding each trial from memory.
 5. Score each decoded trial using SSIMULACRA2 against the processed reference.
 6. Test a lossless WebP candidate as well.
-7. Write the smallest tested candidate whose score is at least the threshold.
+7. Apply any byte ceiling or size-based skip, then write the smallest tested candidate whose score is at least the threshold.
 
 The native SSIMULACRA2 scale is **not a percentage** and may yield negative scores for severe distortion. A score of `100` indicates identical imagery under the metric's comparison semantics; `90` is commonly considered visually lossless, around `80` very high quality, and `70` high quality. These are guidance, not guarantees that everyone will perceive images identically. See [SSIMULACRA2 reference](https://github.com/cloudinary/ssimulacra2).
 
@@ -214,10 +252,12 @@ errors abort either mode, without returning a partial winner.
 ## Exit behavior
 
 A successful conversion exits `0` after writing the selected, decoded-and-scored
-WebP. Help/version also exit `0`. Invalid arguments exit `2`; path/input errors,
-encoding/decoding failures, unmet thresholds and output errors exit `1` with
+WebP, or after a requested size-based skip without writing. Help/version also
+exit `0`. Invalid arguments exit `2`; path/input errors,
+encoding/decoding failures, unmet thresholds, exceeded byte caps and output errors exit `1` with
 details on stderr. Successful file output leaves stdout empty; successful stdout
-output contains only WebP bytes. Input `-` is unsupported.
+output contains only WebP bytes unless skipped (empty stdout). Quiet mode keeps
+errors visible. Input `-` is unsupported.
 
 ## Development
 
@@ -258,6 +298,9 @@ Output tests compare file/stdout payloads with selected bytes, independently
 decode/score written images, check stderr summaries and
 verbose history, and cover staged replacement, cleanup, late collisions, partial
 writes, injected disk-full/flush errors and a real broken stdout connection.
+Size-policy tests cover inclusive caps, strict larger-only skips, failure
+precedence, source/destination preservation, empty stdout on skips/failures,
+both search modes, resized alpha, and quiet reporting with visible errors.
 The suite also retains the Phase 0 API tests.
 
 The executable matrix crosses 11 fixtures with scales 1/0.5, thresholds

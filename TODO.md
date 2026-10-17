@@ -268,7 +268,7 @@ and the v0.1.0 tag remain open until actual native runs pass.
 
 - [x] Add `--scale-width` and `--scale-height` arguments as alternatives to `--scale`, allowing users to specify maximum output dimensions. Resize the image to fit within the specified bounds while preserving its original aspect ratio, without cropping or stretching.
 - [x] Add `--search exhaustive` (all 101 integer lossy qualities + lossless), with guarantee limited to this set.
-- [ ] Add `--skip-if-larger`, `--max-bytes`, JSON reporting or quiet mode.
+- [x] Add `--skip-if-larger`, `--max-bytes`, JSON reporting or quiet mode.
 - [ ] Add batch/directory mode with bounded parallelism.
 - [ ] Add color profile support, EXIF orientation and 16-bit/HDR pathway.
 - [ ] Add richer WebP encoder tuning options and alpha-quality controls.
@@ -304,6 +304,24 @@ tiny and transparent inputs; exhaustive selections match at thresholds 0/80/100.
 Twelve additional CLI conversions check file/stdout equality, dimensions/alpha,
 102 verbose trials, unchanged sources and cleanup. Release exhaustive file and
 stdout checks also passed. Native hosted macOS/Windows validation remains pending.
+
+Size policies are available through `--skip-if-larger` and `--max-bytes BYTES`,
+with `-q`/`--quiet` implementing this item's reporting alternative; JSON reports
+remain deferred. The byte ceiling is inclusive and never lowers the threshold.
+A cap failure exits `1` before writing and takes priority over skipping. A
+strictly larger-than-source result is skipped successfully (exit `0`), leaving
+the destination untouched or absent and stdout empty. Equal sizes are written.
+Quiet conflicts with verbose and retains error diagnostics and exit codes.
+README/help document the options, precedence and stdout/redirection behavior.
+See [PLAN.md, section 23](PLAN.md#23-phase-9--size-policies-and-quiet-mode).
+
+Local Linux validation (Rust 1.89.0): formatting, Clippy with denied warnings,
+all 101 tests, locked/offline release build and release smoke/policy checks
+passed. Tests cover cap and skip boundaries, both search modes and output
+routes, independently scored RGB/resized RGBA, destination/source preservation,
+cleanup and quiet behavior with visible failures. Release checks confirmed an
+exact 52-byte cap, a 70-to-304-byte recompression skip and equal-size writes in
+both modes. Native hosted macOS/Windows validation remains pending.
 
 ## Release acceptance checklist
 
