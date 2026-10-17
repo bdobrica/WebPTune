@@ -19,6 +19,55 @@ const SOURCE_BYTES_PER_PIXEL: u64 = 8;
 // pyramids, candidate metric scratch, encoder state and retained encoded bytes.
 const PROCESSING_BYTES_PER_PIXEL: u64 = 256;
 
+/// Resize by a multiplier or fit within optional maximum dimensions.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Resize {
+    Scale(f64),
+    /// At least one positive bound is required. Images are never enlarged.
+    Bounds {
+        width: Option<u32>,
+        height: Option<u32>,
+    },
+}
+
+impl Resize {
+    /// Calculate dimensions before decoding; codec and memory guards apply next.
+    pub fn dimensions(self, source: (u32, u32)) -> Result<(u32, u32)> {
+        match self {
+            Self::Scale(scale) => scaled_dimensions(source, scale),
+            Self::Bounds { width, height } => {
+                pixel_count(source.0, source.1)?;
+                ensure!(
+                    width.is_some() || height.is_some(),
+                    "at least one maximum width or height is required"
+                );
+                ensure!(
+                    width != Some(0) && height != Some(0),
+                    "maximum width and height must be positive integers"
+                );
+                // Choose min(1, width/source_width, height/source_height).
+                // Exact u64 cross-products avoid floating-point boundary drift;
+                // even products of two u32::MAX values fit in u64.
+                let (mut numerator, mut denominator) = (1_u64, 1_u64);
+                for (bound, axis) in [(width, source.0), (height, source.1)] {
+                    if let Some(bound) = bound {
+                        if u64::from(bound) * denominator < numerator * u64::from(axis) {
+                            numerator = u64::from(bound);
+                            denominator = u64::from(axis);
+                        }
+                    }
+                }
+                // Round to nearest pixel, with halves upward and a one-pixel
+                // minimum. The chosen ratio cannot exceed either integer bound.
+                let dimension = |axis| {
+                    ((u64::from(axis) * numerator + denominator / 2) / denominator).max(1) as u32
+                };
+                Ok((dimension(source.0), dimension(source.1)))
+            }
+        }
+    }
+}
+
 fn pixel_count(width: u32, height: u32) -> Result<u64> {
     ensure!(
         width > 0 && height > 0,
@@ -120,10 +169,10 @@ fn estimated_processing_bytes(source: (u32, u32), output: (u32, u32)) -> Result<
 pub fn validate_processing_dimensions(source: (u32, u32), output: (u32, u32)) -> Result<()> {
     validate_source_dimensions(source.0, source.1)?;
     pixel_count(output.0, output.1)?;
-    ensure!(output.0 <= WEBP_MAX_DIMENSION && output.1 <= WEBP_MAX_DIMENSION, "output {}x{} exceeds WebP's maximum of {WEBP_MAX_DIMENSION} pixels per axis; use a smaller --scale", output.0, output.1);
+    ensure!(output.0 <= WEBP_MAX_DIMENSION && output.1 <= WEBP_MAX_DIMENSION, "output {}x{} exceeds WebP's maximum of {WEBP_MAX_DIMENSION} pixels per axis; use a smaller --scale or tighter --scale-width/--scale-height bounds", output.0, output.1);
     checked_buffer_len(output.0, output.1, 4)?;
     let bytes = estimated_processing_bytes(source, output)?;
-    ensure!(bytes <= MAX_ESTIMATED_BYTES, "estimated working memory is {bytes} bytes; budget is {MAX_ESTIMATED_BYTES} bytes; use a smaller --scale");
+    ensure!(bytes <= MAX_ESTIMATED_BYTES, "estimated working memory is {bytes} bytes; budget is {MAX_ESTIMATED_BYTES} bytes; use a smaller --scale or tighter --scale-width/--scale-height bounds");
     Ok(())
 }
 
@@ -154,13 +203,92 @@ pub fn validate_resize_dimensions(
         .and_then(|bytes| bytes.checked_add(float_source))
         .and_then(|bytes| bytes.checked_add(weights))
         .context("resize memory estimate overflow")?;
-    ensure!(bytes <= MAX_ESTIMATED_BYTES, "estimated working memory including resize buffers is {bytes} bytes; budget is {MAX_ESTIMATED_BYTES} bytes; use a smaller --scale or a smaller source image");
+    ensure!(bytes <= MAX_ESTIMATED_BYTES, "estimated working memory including resize buffers is {bytes} bytes; budget is {MAX_ESTIMATED_BYTES} bytes; use a smaller --scale, tighter --scale-width/--scale-height bounds or a smaller source image");
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dimension_bounds_fit_landscape_portrait_and_tiny_sources() {
+        for (source, width, height, expected) in [
+            ((1920, 1080), Some(800), None, (800, 450)),
+            ((1920, 1080), None, Some(450), (800, 450)),
+            ((1920, 1080), Some(800), Some(600), (800, 450)),
+            ((1920, 1080), Some(1000), Some(450), (800, 450)),
+            ((1080, 1920), Some(600), Some(800), (450, 800)),
+            ((1080, 1920), Some(450), None, (450, 800)),
+            ((17, 11), Some(9), None, (9, 6)),
+            ((17, 11), None, Some(6), (9, 6)),
+            ((17, 11), Some(9), Some(5), (8, 5)),
+            ((3, 1), Some(2), None, (2, 1)),
+            ((1, 3), None, Some(1), (1, 1)),
+            ((17, 11), Some(1), None, (1, 1)),
+            ((17, 11), None, Some(1), (2, 1)),
+            ((17, 11), Some(100), Some(11), (17, 11)),
+            ((17, 11), Some(100), None, (17, 11)),
+            ((1, 1), Some(100), Some(100), (1, 1)),
+            (
+                (u32::MAX, u32::MAX),
+                Some(u32::MAX - 1),
+                None,
+                (u32::MAX - 1, u32::MAX - 1),
+            ),
+            ((u32::MAX, 1), Some(1), Some(u32::MAX), (1, 1)),
+            ((1, u32::MAX), Some(u32::MAX), Some(1), (1, 1)),
+        ] {
+            let resize = Resize::Bounds { width, height };
+            assert_eq!(
+                resize.dimensions(source).unwrap(),
+                expected,
+                "{source:?} {resize:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rounded_dimensions_never_exceed_bounds_or_enlarge_the_source() {
+        for source_width in 1..=16 {
+            for source_height in 1..=16 {
+                for width in 1..=20 {
+                    for height in 1..=20 {
+                        let (actual_width, actual_height) = Resize::Bounds {
+                            width: Some(width),
+                            height: Some(height),
+                        }
+                        .dimensions((source_width, source_height))
+                        .unwrap();
+                        assert!((1..=width.min(source_width)).contains(&actual_width));
+                        assert!((1..=height.min(source_height)).contains(&actual_height));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_bounds_and_source_dimensions_are_rejected() {
+        for (width, height) in [
+            (None, None),
+            (Some(0), None),
+            (None, Some(0)),
+            (Some(1), Some(0)),
+        ] {
+            assert!(Resize::Bounds { width, height }
+                .dimensions((17, 11))
+                .is_err());
+        }
+        for source in [(0, 1), (1, 0)] {
+            assert!(Resize::Bounds {
+                width: Some(1),
+                height: None
+            }
+            .dimensions(source)
+            .is_err());
+        }
+    }
 
     #[test]
     fn scale_rounding_tiny_and_invalid_values() {

@@ -17,8 +17,7 @@ use image::{
 };
 
 use crate::limits::{
-    checked_buffer_len, scaled_dimensions, validate_resize_dimensions, MAX_ESTIMATED_BYTES,
-    MAX_SOURCE_PIXELS,
+    checked_buffer_len, validate_resize_dimensions, Resize, MAX_ESTIMATED_BYTES, MAX_SOURCE_PIXELS,
 };
 
 /// Packed, owned 8-bit reference pixels. Fully opaque images use RGB.
@@ -81,8 +80,15 @@ fn decoder_limits() -> Limits {
 /// decoder buffers compressed input). Decoder allocation limits are best effort,
 /// not a process memory cap or a complete file-integrity validator.
 pub fn load(path: &Path, scale: f64) -> Result<PreparedImage> {
+    load_with_resize(path, Resize::Scale(scale))
+}
+
+/// Prepare with a scale multiplier or aspect-preserving maximum dimensions.
+///
+/// Uses the same pre-decode limits and single Lanczos3 pass as [`load`].
+pub fn load_with_resize(path: &Path, resize: Resize) -> Result<PreparedImage> {
     // Validate library callers before any I/O, just as Clap validates CLI input.
-    scaled_dimensions((1, 1), scale)?;
+    resize.dimensions((1, 1))?;
     let file =
         File::open(path).with_context(|| format!("cannot read input '{}'", path.display()))?;
     let reader = ImageReader::new(BufReader::new(file))
@@ -117,12 +123,12 @@ pub fn load(path: &Path, scale: f64) -> Result<PreparedImage> {
         Some(format) => bail!("unsupported input format {format:?}; supported still formats: JPEG, PNG, WebP, BMP"),
         None => bail!("unsupported or unrecognized input format; supported still formats: JPEG, PNG, WebP, BMP"),
     };
-    prepare(decoder, scale).with_context(|| format!("cannot prepare input '{}'", path.display()))
+    prepare(decoder, resize).with_context(|| format!("cannot prepare input '{}'", path.display()))
 }
 
-fn prepare(mut decoder: Box<dyn ImageDecoder>, scale: f64) -> Result<PreparedImage> {
+fn prepare(mut decoder: Box<dyn ImageDecoder>, resize: Resize) -> Result<PreparedImage> {
     let original_dimensions = decoder.dimensions();
-    let dimensions = scaled_dimensions(original_dimensions, scale)?;
+    let dimensions = resize.dimensions(original_dimensions)?;
     validate_resize_dimensions(
         original_dimensions,
         dimensions,

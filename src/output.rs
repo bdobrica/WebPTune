@@ -103,6 +103,8 @@ mod tests {
             output: OutputTarget::File(directory.path().join("output.webp")),
             threshold: 80.0,
             scale: 1.0,
+            scale_width: None,
+            scale_height: None,
             verbose: false,
         };
         (directory, args)

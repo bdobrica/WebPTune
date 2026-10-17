@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, ensure, Context, Result};
 use clap::{builder::TypedValueParser, Parser};
 
+use crate::limits::Resize;
+
 /// A literal `-` selects binary stdout; every other value is a file path.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OutputTarget {
@@ -46,11 +48,19 @@ fn parse_scale(value: &str) -> std::result::Result<f64, String> {
     Ok(scale)
 }
 
+fn parse_dimension(value: &str) -> std::result::Result<u32, String> {
+    value
+        .parse::<u32>()
+        .ok()
+        .filter(|&dimension| dimension > 0)
+        .ok_or_else(|| format!("dimension must be an integer in [1, {}]", u32::MAX))
+}
+
 /// Convert a still image to WebP with a minimum SSIMULACRA2 score.
 #[derive(Clone, Debug, Parser)]
 #[command(
     version,
-    after_help = "Examples:\n  webptune -i photo.png -o photo.webp -t 90 -s 0.5\n  webptune -i photo.png -o - > photo.webp\n\nExisting destination files are replaced only after the complete WebP is ready. The input file cannot be the destination. Reports go to stderr; '-o -' writes only WebP bytes to stdout."
+    after_help = "Examples:\n  webptune -i photo.png -o photo.webp -t 90 -s 0.5\n  webptune -i photo.png -o photo.webp --scale-width 1920 --scale-height 1080\n  webptune -i photo.png -o - > photo.webp\n\nDimension bounds preserve aspect ratio (rounded to whole pixels) without cropping, stretching or upscaling. Use either bound or both, as an alternative to --scale.\n\nExisting destination files are replaced only after the complete WebP is ready. The input file cannot be the destination. Reports go to stderr; '-o -' writes only WebP bytes to stdout."
 )]
 pub struct Args {
     /// Source still image (JPEG, PNG, WebP or BMP); stdin is not supported
@@ -66,8 +76,16 @@ pub struct Args {
     pub threshold: f64,
 
     /// Width/height multiplier in (0, 1]; score is measured after resizing
-    #[arg(short, long, default_value = "1.0", value_name = "FACTOR", value_parser = parse_scale, allow_hyphen_values = true)]
+    #[arg(short, long, default_value = "1.0", value_name = "FACTOR", value_parser = parse_scale, allow_hyphen_values = true, conflicts_with_all = ["scale_width", "scale_height"])]
     pub scale: f64,
+
+    /// Maximum output width in pixels; preserve aspect ratio, never upscale
+    #[arg(long, value_name = "PIXELS", value_parser = parse_dimension, allow_hyphen_values = true)]
+    pub scale_width: Option<u32>,
+
+    /// Maximum output height in pixels; preserve aspect ratio, never upscale
+    #[arg(long, value_name = "PIXELS", value_parser = parse_dimension, allow_hyphen_values = true)]
+    pub scale_height: Option<u32>,
 
     /// Print detailed progress and trial diagnostics to stderr
     #[arg(short, long)]
@@ -75,6 +93,18 @@ pub struct Args {
 }
 
 impl Args {
+    /// Resolve the dimension bounds or the default/explicit scale multiplier.
+    pub fn resize(&self) -> Resize {
+        if self.scale_width.is_some() || self.scale_height.is_some() {
+            Resize::Bounds {
+                width: self.scale_width,
+                height: self.scale_height,
+            }
+        } else {
+            Resize::Scale(self.scale)
+        }
+    }
+
     /// Check input readability and reject source/destination aliases without writing.
     ///
     /// Canonical paths catch relative and symlink aliases; file handles also catch
@@ -178,6 +208,9 @@ mod tests {
         assert_eq!(args.output, OutputTarget::File("out.webp".into()));
         assert_eq!(args.threshold, 80.0);
         assert_eq!(args.scale, 1.0);
+        assert_eq!(args.resize(), Resize::Scale(1.0));
+        assert_eq!(args.scale_width, None);
+        assert_eq!(args.scale_height, None);
         assert!(!args.verbose);
         let args = parse(&["-t", "90", "-s", "0.5", "-v"]).unwrap();
         assert_eq!(args.threshold, 90.0);
@@ -209,6 +242,57 @@ mod tests {
             OutputTarget::File("./-".into())
         );
         assert!(parse_output(OsStr::new("")).is_err());
+    }
+
+    #[test]
+    fn dimension_bounds_are_alternatives_to_explicit_scale() {
+        for (flags, width, height) in [
+            (vec!["--scale-width", "1920"], Some(1920), None),
+            (vec!["--scale-height=1080"], None, Some(1080)),
+            (
+                vec!["--scale-width", "1920", "--scale-height", "1080"],
+                Some(1920),
+                Some(1080),
+            ),
+            (vec!["--scale-width", "4294967295"], Some(u32::MAX), None),
+        ] {
+            let args = parse(&flags).unwrap();
+            assert_eq!(args.resize(), Resize::Bounds { width, height });
+            for scale in ["-s", "--scale"] {
+                for value in ["0.5", "1.0"] {
+                    let mut conflicting = flags.clone();
+                    conflicting.extend([scale, value]);
+                    assert_eq!(
+                        parse(&conflicting).unwrap_err().kind(),
+                        clap::error::ErrorKind::ArgumentConflict
+                    );
+                    conflicting.rotate_right(2);
+                    assert_eq!(
+                        parse(&conflicting).unwrap_err().kind(),
+                        clap::error::ErrorKind::ArgumentConflict
+                    );
+                }
+            }
+        }
+        for flag in ["--scale-width", "--scale-height"] {
+            for value in [
+                "0",
+                "-1",
+                "0.5",
+                "1e3",
+                "NaN",
+                "inf",
+                "abc",
+                "",
+                "4294967296",
+            ] {
+                let error = parse(&[flag, value]).unwrap_err().to_string();
+                assert!(
+                    error.contains("dimension must be an integer in [1, 4294967295]"),
+                    "{error}"
+                );
+            }
+        }
     }
 
     #[test]

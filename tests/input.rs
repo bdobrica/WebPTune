@@ -6,6 +6,7 @@ use std::process::Command;
 use image::{AnimationDecoder, ImageDecoder};
 use tempfile::tempdir;
 use webptune::input::{self, Pixels};
+use webptune::limits::Resize;
 
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -124,6 +125,96 @@ fn scaling_rounds_axes_and_handles_tiny_and_unchanged_images() {
             assert_eq!(loaded.pixels().has_alpha(), alpha);
             assert_eq!(loaded.pixels().as_bytes(), expected);
         }
+    }
+}
+
+#[test]
+fn bounds_use_the_same_single_resize_and_alpha_path_as_scale() {
+    for name in [
+        "rgb.png",
+        "rgba.png",
+        "rgb.jpg",
+        "rgb.bmp",
+        "rgb.webp",
+        "alpha-edge.png",
+        "tiny-rgba.png",
+    ] {
+        let original = input::load(&fixture(name), 1.0).unwrap();
+        let width = original.original_dimensions().0;
+        let bounds = input::load_with_resize(
+            &fixture(name),
+            Resize::Bounds {
+                width: Some(width.div_ceil(2)),
+                height: None,
+            },
+        )
+        .unwrap();
+        let scale = input::load(
+            &fixture(name),
+            f64::from(width.div_ceil(2)) / f64::from(width),
+        )
+        .unwrap();
+        assert_eq!(bounds.original_dimensions(), original.original_dimensions());
+        assert_eq!(bounds.pixels().dimensions(), scale.pixels().dimensions());
+        assert_eq!(bounds.pixels().as_bytes(), scale.pixels().as_bytes());
+        assert_eq!(bounds.pixels().has_alpha(), scale.pixels().has_alpha());
+
+        let unchanged = input::load_with_resize(
+            &fixture(name),
+            Resize::Bounds {
+                width: Some(u32::MAX),
+                height: Some(u32::MAX),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            unchanged.pixels().dimensions(),
+            original.pixels().dimensions()
+        );
+        assert_eq!(unchanged.pixels().as_bytes(), original.pixels().as_bytes());
+    }
+    let wide = input::load_with_resize(
+        &fixture("wide.png"),
+        Resize::Bounds {
+            width: Some(10000),
+            height: Some(1),
+        },
+    )
+    .unwrap();
+    assert_eq!(wide.pixels().dimensions(), (10000, 1));
+}
+
+#[test]
+fn bounds_validate_arguments_and_header_limits_before_decoding() {
+    for resize in [
+        Resize::Bounds {
+            width: None,
+            height: None,
+        },
+        Resize::Bounds {
+            width: Some(0),
+            height: Some(1),
+        },
+    ] {
+        let error = input::load_with_resize(Path::new("missing.png"), resize).unwrap_err();
+        assert!(!error.to_string().contains("cannot read input"));
+    }
+    for (name, width, message) in [
+        ("oversized.bmp", 1, "maximum is 100000000"),
+        ("over-budget.bmp", u32::MAX, "estimated working memory"),
+        ("wide.bmp", 20000, "exceeds WebP's maximum"),
+    ] {
+        let error = input::load_with_resize(
+            &fixture(name),
+            Resize::Bounds {
+                width: Some(width),
+                height: None,
+            },
+        )
+        .unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains(message), "{error}");
+        assert!(!error.contains("cannot decode image pixels"), "{error}");
     }
 }
 

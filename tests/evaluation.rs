@@ -463,6 +463,79 @@ fn minimum_search_budget_still_measures_both_endpoints_and_lossless() {
 }
 
 #[test]
+fn dimension_bound_cli_outputs_match_independently_scored_resized_references() {
+    for name in ["rgb.png", "rgba.png"] {
+        let directory = tempdir().unwrap();
+        let source = directory.path().join(name);
+        let original = fs::read(fixture(name)).unwrap();
+        fs::write(&source, &original).unwrap();
+        let destination = directory.path().join("output.webp");
+        // Use the existing multiplier API for reference preparation so the CLI
+        // bounds calculation is checked against independently specified ratios.
+        for (flags, scale, dimensions) in [
+            (vec!["--scale-width", "9"], 9.0 / 17.0, (9, 6)),
+            (vec!["--scale-height", "6"], 6.0 / 11.0, (9, 6)),
+            (
+                vec!["--scale-width", "9", "--scale-height", "5"],
+                5.0 / 11.0,
+                (8, 5),
+            ),
+            (
+                vec!["--scale-width", "8", "--scale-height", "9"],
+                8.0 / 17.0,
+                (8, 5),
+            ),
+            (
+                vec!["--scale-width", "100", "--scale-height", "100"],
+                1.0,
+                (17, 11),
+            ),
+            (vec!["--scale-width", "1"], 1.0 / 17.0, (1, 1)),
+            (vec!["--scale-height", "1"], 1.0 / 11.0, (2, 1)),
+        ] {
+            let reference = input::load(&source, scale).unwrap();
+            assert_eq!(reference.pixels().dimensions(), dimensions);
+            for threshold in ["90", "100"] {
+                fs::write(&destination, b"old destination").unwrap();
+                let run = |target: &Path| {
+                    Command::new(env!("CARGO_BIN_EXE_webptune"))
+                        .arg("-i")
+                        .arg(&source)
+                        .arg("-o")
+                        .arg(target)
+                        .args(&flags)
+                        .args(["-t", threshold])
+                        .output()
+                        .unwrap()
+                };
+                let file = run(&destination);
+                assert!(file.status.success(), "{name} {flags:?}: {file:?}");
+                assert!(file.stdout.is_empty());
+                let stdout = run(Path::new("-"));
+                assert!(stdout.status.success(), "{name} {flags:?}: {stdout:?}");
+                let bytes = fs::read(&destination).unwrap();
+                assert_eq!(stdout.stdout, bytes);
+                let score = independent_score(reference.pixels(), &bytes);
+                assert!(score.is_finite() && score >= threshold.parse::<f64>().unwrap());
+                let decoded =
+                    image::load_from_memory_with_format(&bytes, ImageFormat::WebP).unwrap();
+                assert_eq!((decoded.width(), decoded.height()), dimensions);
+                if reference.pixels().has_alpha() {
+                    assert!(reference
+                        .pixels()
+                        .as_bytes()
+                        .chunks_exact(4)
+                        .map(|p| p[3])
+                        .eq(decoded.to_rgba8().pixels().map(|p| p[3])));
+                }
+                assert_eq!(fs::read(&source).unwrap(), original);
+                assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 2);
+            }
+        }
+    }
+}
+
+#[test]
 fn file_and_stdout_match_selected_bytes_and_independent_scores() {
     // Cross every format/alpha case with both scales and every requested
     // threshold at the executable boundary, rather than only testing trials.

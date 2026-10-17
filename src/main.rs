@@ -6,7 +6,7 @@ use webptune::{input, output, search};
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     args.validate_paths()?;
-    let reference = input::load(&args.input, args.scale)?;
+    let reference = input::load_with_resize(&args.input, args.resize())?;
     let evaluator = TrialEvaluator::new(reference.pixels())?;
     let result = search::search(&evaluator, args.threshold)?;
     if args.verbose {

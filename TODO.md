@@ -266,13 +266,28 @@ and the v0.1.0 tag remain open until actual native runs pass.
 
 ## Phase 9 — Deferred enhancements (NOT required for MVP)
 
-- [ ] Add `--scale-width` and `--scale-height` arguments as alternatives to `--scale`, allowing users to specify maximum output dimensions. Resize the image to fit within the specified bounds while preserving its original aspect ratio, without cropping or stretching.
+- [x] Add `--scale-width` and `--scale-height` arguments as alternatives to `--scale`, allowing users to specify maximum output dimensions. Resize the image to fit within the specified bounds while preserving its original aspect ratio, without cropping or stretching.
 - [ ] Add `--search exhaustive` (all 101 integer lossy qualities + lossless), with guarantee limited to this set.
 - [ ] Add `--skip-if-larger`, `--max-bytes`, JSON reporting or quiet mode.
 - [ ] Add batch/directory mode with bounded parallelism.
 - [ ] Add color profile support, EXIF orientation and 16-bit/HDR pathway.
 - [ ] Add richer WebP encoder tuning options and alpha-quality controls.
 - [ ] Add stdin input and interrupted-operation cancellation.
+
+Maximum-dimension resizing accepts either or both positive integer bounds,
+never upscales, rounds to whole pixels (minimum one per axis), and rejects
+an explicit `--scale`/`-s` alongside either bound. The tightest bound determines
+one shared resize ratio. Existing pre-decode source/codec/memory limits,
+Lanczos3 filtering, alpha handling and processed-reference scoring still apply.
+The README and CLI help document the options and rounding behavior. See
+[PLAN.md, section 21](PLAN.md#21-phase-9--maximum-output-dimensions).
+
+Local Linux validation (Rust 1.89.0): formatting, Clippy with denied warnings,
+all 84 tests, locked/offline release build and independent release smoke checks
+passed. The release binary also fitted the RGBA fixture from 17×11 to 8×5
+within 9×5 bounds at threshold 100, with identical file/stdout bytes. The new
+tests include 56 bounded CLI conversions, independently decoded and scored at
+thresholds 90/100. Hosted/native macOS and Windows validation remains pending.
 
 ## Release acceptance checklist
 

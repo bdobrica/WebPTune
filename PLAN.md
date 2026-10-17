@@ -1,6 +1,6 @@
 # Implementation Plan — webptune
 
-**Status:** Phases 0–6 implemented; Phase 7 local performance/robustness validated, macOS/Windows checks pending; Phase 8 documentation/CI implemented, hosted validation and tag pending · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
+**Status:** Phases 0–6 implemented; Phase 7 local performance/robustness validated, macOS/Windows checks pending; Phase 8 documentation/CI implemented, hosted validation and tag pending; Phase 9 maximum-dimension resizing implemented · **Target:** v0.1.0 · **Language:** Rust (edition 2021)
 
 ## 1. Purpose and scope
 
@@ -12,7 +12,7 @@ The objective is **minimize encoded bytes subject to a measured quality floor**,
 
 1. Accept common still-image formats (JPEG, PNG, WebP, BMP) and convert to still WebP.
 2. Support `--threshold` as a native SSIMULACRA2 score (default `80`, valid `0..=100`).
-3. Support `--scale` (default `1.0`, valid `0 < scale <= 1.0`) with Lanczos3 resizing.
+3. Support `--scale` (default `1.0`, valid `0 < scale <= 1.0`) with Lanczos3 resizing. Phase 9 adds maximum width/height bounds as alternatives.
 4. Preserve alpha when present, with alpha-aware quality comparisons.
 5. Search lossy quality configurations in memory, then consider lossless WebP.
 6. Select the smallest **tested, feasible** encoded candidate.
@@ -88,6 +88,8 @@ struct Options {
     output: OutputTarget,
     threshold: f64,
     scale: f64,
+    scale_width: Option<u32>,
+    scale_height: Option<u32>,
     verbose: bool,
 }
 
@@ -119,7 +121,7 @@ webptune \
   --input INPUT \
   --output OUTPUT|- \
   [--threshold 80] \
-  [--scale 1.0] \
+  [--scale 1.0 | --scale-width PIXELS [--scale-height PIXELS] | --scale-height PIXELS] \
   [--verbose]
 ```
 
@@ -129,6 +131,7 @@ Validation:
 
 - `threshold`: finite numeric value `0..=100`; reject NaN, infinities, and out-of-range values.
 - `scale`: finite numeric value `(0,1]`; reject zero, negative, >1, NaN, infinity.
+- `scale-width`/`scale-height`: positive `u32` maximum dimensions; either or both may be supplied. Reject combination with an explicit `--scale`, including `-s 1`. Fit to the tightest bound without upscaling, preserving aspect ratio with nearest-pixel rounding (minimum one pixel per axis). See section 21 for implementation details.
 - `input`: exists, readable, supported format, valid decoded dimensions.
 - `output`: path or literal `-`. Refuse to overwrite the input file, including obvious canonical-path aliases; use a more robust same-file check if feasible.
 - Reject inconsistent or dangerous dimensions. Compute scaled dimensions with checked arithmetic, `max(1, round(original * scale))` on each axis; validate results against encoder and application limits.
@@ -816,3 +819,52 @@ stdout quick starts passed, and Git status stayed clean before and after.
 The manifest, lockfile and Rust sources matched the working checkout. This
 closes the local documentation/clean-build gate; hosted CI and the release tag
 remain pending.
+
+## 21. Phase 9 — Maximum output dimensions
+
+The first deferred enhancement adds `--scale-width PIXELS` and
+`--scale-height PIXELS` as maximum output dimensions. Either may be supplied
+alone, or both together. Values must be positive integers fitting `u32`;
+zero, negative, fractional, nonnumeric and overflowing values fail argument
+parsing. An explicit `--scale` or `-s` conflicts with either bound, including a
+factor of 1. Clap's default scale does not count as an explicit argument, so
+bound-only commands work without changing the default no-resize behavior.
+
+`limits::Resize` represents a multiplier or dimension bounds. For bounds it
+chooses `min(1, width/source_width, height/source_height)`, omitting missing
+bounds, with exact `u64` rational comparisons. Each output axis is rounded to
+the nearest pixel (halves upward) with a minimum of one. Output never exceeds
+a supplied bound or the source dimensions. This fits without cropping,
+stretching or upscaling; unavoidable pixel rounding can slightly change the
+exact aspect ratio, especially for tiny sources. Bounds do not bypass source,
+codec or working-memory limits, and do not silently shrink further to satisfy
+those limits.
+
+`input::load_with_resize(path, Resize)` shares the existing guarded decoder,
+single Lanczos3 pass, premultiplied-alpha filtering and RGB/RGBA normalization.
+The original `input::load(path, scale)` API remains available as a wrapper.
+The CLI resolves its sizing options once before preparation. Scoring still
+compares candidates with the processed reference; quality search and safe
+file/stdout output use the same pipeline.
+
+Coverage includes landscape/portrait and single/combined bounds, limiting-axis
+selection, whole-pixel rounding, one-pixel results, no upscaling, `u32` boundaries,
+invalid options and scale conflicts in both orders. A grid checks that rounded
+dimensions stay within both source and bound dimensions. Input tests compare
+processed pixels with equivalent multiplier resizes, including transparent
+edges, unchanged images, and sources exceeding WebP's output axis limit.
+Header-only fixtures verify that bounds preserve pre-decode resource checks.
+The executable matrix adds 56 RGB/RGBA file/stdout conversions with width-only,
+height-only, combined and oversized bounds at thresholds 90/100. Their outputs
+are independently decoded and scored against equivalent multiplier references,
+with checks for dimensions, alpha, identical file/stdout bytes, source
+preservation and staging cleanup. CI's existing all-target test step includes
+these tests on each configured platform; native hosted runs remain pending.
+
+Local Linux validation (Rust 1.89.0) passed `cargo fmt --all -- --check`,
+`cargo clippy --all-targets --locked --offline -- -D warnings`,
+`cargo test --all-targets --locked --offline` (84 tests), and the portable
+locked/offline release build for the binary and smoke checker. The independent
+release smoke checks passed. An additional release CLI check fitted the RGBA
+fixture from 17×11 to 8×5 within 9×5 bounds at threshold 100, producing identical
+106-byte WebP payloads through file and stdout output.

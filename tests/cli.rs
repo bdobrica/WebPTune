@@ -71,6 +71,8 @@ fn help_and_version_work_without_required_paths() {
                 "--output",
                 "--threshold",
                 "--scale",
+                "--scale-width",
+                "--scale-height",
                 "--verbose",
                 "[default: 80]",
                 "[default: 1.0]",
@@ -170,6 +172,31 @@ fn invalid_numbers_never_write_or_truncate() {
     );
     assert_eq!(fs::read(&fixture.output).unwrap(), DESTINATION);
     fixture.source_unchanged();
+}
+
+#[test]
+fn invalid_or_conflicting_dimension_options_preserve_existing_output() {
+    let fixture = Fixture::new();
+    fs::write(&fixture.output, DESTINATION).unwrap();
+    for flag in ["--scale-width", "--scale-height"] {
+        for value in ["0", "-1", "1.5", "NaN", "inf", "4294967296", "abc"] {
+            let result = fixture.run(&fixture.output, &[flag, value]);
+            assert_failure(&result, "dimension must be an integer");
+            assert_eq!(result.status.code(), Some(2));
+            assert_eq!(fs::read(&fixture.output).unwrap(), DESTINATION);
+        }
+        let result = fixture.run(&fixture.output, &[flag]);
+        assert_failure(&result, "a value is required");
+        assert_eq!(result.status.code(), Some(2));
+        for scale in ["-s", "--scale"] {
+            let result = fixture.run(&fixture.output, &[flag, "8", scale, "1"]);
+            assert_failure(&result, "cannot be used with");
+            assert_eq!(result.status.code(), Some(2));
+            assert_eq!(fs::read(&fixture.output).unwrap(), DESTINATION);
+        }
+    }
+    fixture.source_unchanged();
+    assert_eq!(fs::read_dir(fixture.dir.path()).unwrap().count(), 2);
 }
 
 #[test]

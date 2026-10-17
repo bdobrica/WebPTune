@@ -41,7 +41,7 @@ source: the shell opens it before the application starts.
 - JPEG, PNG, WebP and BMP still-image input.
 - WebP output in either lossy or lossless mode.
 - Perceptual quality target via native SSIMULACRA2 score (`0..100`, default `80`).
-- Optional downscaling using Lanczos3.
+- Optional Lanczos3 downscaling by a multiplier or maximum width/height.
 - Transparency-aware evaluation and alpha preservation.
 - Binary-safe stdout (`-o -`) for command-line pipelines.
 - In-memory candidate evaluation with lossless comparison.
@@ -104,6 +104,8 @@ webptune --input INPUT --output OUTPUT [OPTIONS]
 | `-o, --output <PATH\|->` | Destination WebP file, or `-` for stdout | Required |
 | `-t, --threshold <SCORE>` | Minimum native SSIMULACRA2 score (`0..=100`) | `80` |
 | `-s, --scale <FACTOR>` | Output width/height multiplier (`0 < scale <= 1`) | `1.0` |
+| `--scale-width <PIXELS>` | Maximum output width, preserving aspect ratio; alternative to `--scale` | Unbounded |
+| `--scale-height <PIXELS>` | Maximum output height, preserving aspect ratio; alternative to `--scale` | Unbounded |
 | `-v, --verbose` | Detailed progress and trial diagnostics on stderr | Off |
 | `-h, --help` | Print help | — |
 | `-V, --version` | Print version | — |
@@ -126,6 +128,19 @@ Example: scale an image to half its width and height before encoding:
 webptune -i large.png -o small.webp --scale 0.5 --threshold 85
 ```
 
+Example: fit within 1920×1080, preserving aspect ratio without cropping or stretching:
+
+```bash
+webptune -i large.png -o fitted.webp --scale-width 1920 --scale-height 1080
+```
+
+Either bound can be used alone, for example `--scale-width 800`. Bounds must be
+positive integers up to `4294967295`; actual output must still pass the codec
+and memory limits below. Images already within the bounds keep their size;
+images are never upscaled. An explicitly supplied `--scale` (including `-s 1`)
+cannot be combined with either dimension bound. With no resizing options, the
+default remains `--scale 1.0`.
+
 Example: write binary WebP to stdout for redirection:
 
 ```bash
@@ -142,7 +157,7 @@ only the exact value `-` selects stdout.
 ## How quality scoring works
 
 1. Decode the source still image.
-2. Resize if `--scale` is different from 1.
+2. Resize once if the scale multiplier or dimension bounds change the dimensions.
 3. Treat **that processed image** as the quality reference.
 4. Try several lossy WebP encoder qualities, decoding each trial from memory.
 5. Score each decoded trial using SSIMULACRA2 against the processed reference.
@@ -171,7 +186,7 @@ than proving all untested qualities infeasible.
 - **Initial color scope:** decoded samples are treated as SDR sRGB-like values. ICC/profile transforms and linear-light resizing are not implemented. Supported 16-bit PNGs are reduced to 8 bits after resizing, losing precision; HDR fidelity is unsupported.
 - **EXIF orientation:** orientation is deliberately not applied. Pre-orient images when orientation matters; stored raster dimensions determine scaling.
 - **Image metadata:** EXIF, XMP and ICC profiles are not promised to carry over into the WebP output.
-- **Resizing:** each axis uses `max(1, round(dimension * scale))`. Lanczos3 runs once when dimensions change and is bypassed at scale 1 or when rounding keeps the same size. Alpha is premultiplied during filtering and returned as straight alpha; hidden RGB does not tint visible edges. Fully opaque processed images use RGB8; others use RGBA8.
+- **Resizing:** `--scale` uses `max(1, round(dimension * scale))` on each axis. Dimension bounds use the smaller of 1, maximum width/source width and maximum height/source height (omitting unspecified bounds), with the same nearest-pixel rounding and one-pixel minimum. Both axes share one ratio; whole-pixel rounding can slightly change the exact aspect ratio, especially for tiny images. Output stays within every supplied bound. Lanczos3 runs once when dimensions change and is bypassed otherwise. Alpha is premultiplied during filtering and returned as straight alpha; hidden RGB does not tint visible edges. Fully opaque processed images use RGB8; others use RGBA8.
 - **Source safety and overwrite policy:** canonical, symlink and hard-link aliases of the input are refused, with another check immediately before replacement. Existing destinations are replaced via a same-directory temporary file and rename; failures before replacement preserve the old destination and clean up staging files. An unrelated destination symlink is replaced as a directory entry, leaving its referent untouched. Dangling destination symlinks are rejected. Concurrent filesystem changes after validation cannot be fully prevented.
 - **File permissions and durability:** the replacement is a new temporary file, so existing destination permissions/ownership/metadata are not preserved (on Unix, new outputs normally have mode `0600`). Contents are synced before replacement, but the containing directory is not synced; power-loss durability is not guaranteed. Abrupt process termination may leave a temporary file. Windows/macOS replacement behavior still needs platform execution; the Phase 7 platform check remains open.
 - **Output failures:** write, flush, sync and rename errors return nonzero. Broken stdout pipes fail too; a partial stdout payload cannot be rolled back. Shell redirection creates/truncates its target before the program runs, so file preservation applies to `-o path`, not `-o - > path`. Keep the redirection target separate from the source.
@@ -207,7 +222,8 @@ and the repository toolchain, including native replacement tests. It validates
 builds without publishing packages, tags or binaries. Hosted execution is pending.
 
 The suite covers argument and allocation limits, CLI process behavior, all four
-input formats, rounded/tiny resizing, RGB/RGBA normalization, grayscale/16-bit
+input formats, rounded/tiny resizing, width/height bounds and option conflicts,
+RGB/RGBA normalization, grayscale/16-bit
 conversion, transparent edges, animation rejection, corrupt/oversized inputs,
 EXIF behavior, source preservation and empty stdout on failure. Candidate tests
 cover every integer lossy quality, lossless, alpha semantics, dimension/layout
