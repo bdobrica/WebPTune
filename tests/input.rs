@@ -335,7 +335,7 @@ fn header_limits_fail_before_missing_pixel_payload_is_read() {
 }
 
 #[test]
-fn exif_orientation_is_deliberately_not_applied() {
+fn exif_orientation_is_applied_before_resizing() {
     let bytes = fs::read(fixture("oriented.jpg")).unwrap();
     let mut decoder = image::codecs::jpeg::JpegDecoder::new(Cursor::new(bytes)).unwrap();
     assert_eq!(
@@ -344,8 +344,24 @@ fn exif_orientation_is_deliberately_not_applied() {
     );
     let oriented = input::load(&fixture("oriented.jpg"), 1.0).unwrap();
     let plain = input::load(&fixture("rgb.jpg"), 1.0).unwrap();
-    assert_eq!(oriented.pixels().dimensions(), (17, 11));
-    assert_eq!(oriented.pixels().as_bytes(), plain.pixels().as_bytes());
+    assert_eq!(oriented.original_dimensions(), (17, 11));
+    assert_eq!(oriented.pixels().dimensions(), (11, 17));
+    let Pixels::Rgb(plain) = plain.pixels() else {
+        panic!("expected RGB")
+    };
+    assert_eq!(
+        oriented.pixels().as_bytes(),
+        image::imageops::rotate90(plain).as_raw()
+    );
+    let bounded = input::load_with_resize(
+        &fixture("oriented.jpg"),
+        Resize::Bounds {
+            width: Some(6),
+            height: Some(8),
+        },
+    )
+    .unwrap();
+    assert_eq!(bounded.pixels().dimensions(), (5, 8));
 }
 
 #[test]

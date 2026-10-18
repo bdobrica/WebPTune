@@ -36,7 +36,7 @@ pub struct BatchSummary {
 }
 
 impl BatchPlan {
-    /// Select .jpg/.jpeg/.png/.webp/.bmp files, case insensitively. Do not follow
+    /// Select .jpg/.jpeg/.png/.webp/.bmp/.hdr files, case insensitively. Do not follow
     /// directory entries that are symlinks, or read special files. The two roots
     /// must exist and have disjoint canonical trees. Generated subdirectories
     /// may be absent; existing output symlinks are refused in batch mode.
@@ -255,7 +255,7 @@ fn supported_extension(path: &Path) -> bool {
     path.extension()
         .and_then(|s| s.to_str())
         .is_some_and(|extension| {
-            ["jpg", "jpeg", "png", "webp", "bmp"]
+            ["jpg", "jpeg", "png", "webp", "bmp", "hdr"]
                 .iter()
                 .any(|e| extension.eq_ignore_ascii_case(e))
         })

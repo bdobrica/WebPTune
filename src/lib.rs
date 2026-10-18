@@ -4,6 +4,7 @@
 
 pub mod batch;
 pub mod cli;
+mod color;
 pub mod encoder;
 pub mod input;
 pub mod limits;

@@ -277,7 +277,7 @@ checkout. See [PLAN.md, section 25](PLAN.md#25-v010-release-tag).
 - [x] Add `--search exhaustive` (all 101 integer lossy qualities + lossless), with guarantee limited to this set.
 - [x] Add `--skip-if-larger`, `--max-bytes`, JSON reporting or quiet mode.
 - [x] Add batch/directory mode with bounded parallelism.
-- [ ] Add color profile support, EXIF orientation and 16-bit/HDR pathway.
+- [x] Add color profile support, EXIF orientation and 16-bit/HDR pathway.
 - [ ] Add richer WebP encoder tuning options and alpha-quality controls.
 - [ ] Add stdin input and interrupted-operation cancellation.
 
@@ -352,6 +352,26 @@ collision/link preflight, continuation after failures, size policies, quiet
 reports, cleanup and actual worker bounds. Release smoke checks recursive,
 two-worker conversions against independently verified single-file bytes. The
 existing native CI matrix runs both the new tests and extended smoke checker.
+
+Color preparation now applies all eight EXIF orientations in JPEG/PNG/WebP
+before bounds and resize, converts supported RGB/grayscale ICC and PNG color
+descriptions to sRGB, and keeps color-managed/16-bit samples in float form until
+final 8-bit quantization. Linear-sRGB Radiance `.hdr` input uses a fixed Reinhard
+tone map to SDR; batch discovery includes `.hdr`. PQ/HLG, custom Radiance
+primaries, other HDR formats and HDR/16-bit output remain unsupported. Scores
+compare the final processed SDR reference. Metadata is discarded after use;
+profile/parser and extra preparation-memory limits fail before output. No new
+locked package versions or native dependencies are introduced. See
+[PLAN.md, section 27](PLAN.md#27-phase-9--color-orientation-and-high-precision-preparation).
+
+Local Linux validation (Rust 1.89.0): formatting, Clippy with denied warnings,
+all 120 tests, a locked/offline release build and the expanded release smoke
+checker passed. Seven new fixtures regenerate byte-identically twice. Tests
+cover independent color/tone-map math, all eight EXIF orientations in three
+formats, 16-bit precision, metadata precedence/errors and parser/memory limits.
+Release file/stdout results meet independently measured score >=90 and match
+recursive two-worker batch output for RGB/RGBA, EXIF, ICC, 16-bit and HDR cases.
+The native CI matrix runs the expanded tests and smoke checker.
 
 ## Release acceptance checklist
 

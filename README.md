@@ -1,6 +1,6 @@
 # WebPTune
 
-Convert JPEG, PNG, WebP or BMP still images to WebP with a minimum measured
+Convert JPEG, PNG, WebP, BMP or Radiance HDR still images to WebP with a minimum measured
 **SSIMULACRA2** score. The tool encodes candidates, decodes and scores them, then
 writes the smallest **tested** output meeting the threshold. It can resize first
 and preserves transparency.
@@ -39,7 +39,9 @@ source: the shell opens it before the application starts.
 
 ## Features
 
-- JPEG, PNG, WebP and BMP still-image input.
+- JPEG, PNG, WebP, BMP and Radiance HDR still-image input.
+- Automatic EXIF orientation and RGB/grayscale ICC conversion to sRGB.
+- Float processing for 16-bit sources and HDR-to-SDR tone mapping.
 - WebP output in either lossy or lossless mode.
 - Optional byte ceiling and skipping of results larger than the source file.
 - Directory batches with optional recursion and a configurable worker limit.
@@ -204,6 +206,54 @@ stderr and the same exit codes and output bytes. It conflicts with `--verbose`.
 It does not suppress explicit help/version output. JSON reporting remains a
 possible future enhancement.
 
+### Color, orientation and HDR
+
+These preparation improvements are available on the current source branch after
+v0.1.0. They apply automatically in single-file and batch mode:
+
+```bash
+webptune -i camera.jpg -o oriented.webp --scale-width 1920
+webptune -i wide-gamut-16bit.png -o srgb.webp --threshold 90
+webptune -i scene.hdr -o preview.webp --scale-width 1920
+```
+
+JPEG/PNG/WebP EXIF orientation is applied before calculating output dimensions,
+so maximum width/height refer to the displayed orientation. All eight EXIF
+rotations/reflections are supported. Missing or invalid orientation tags follow
+the decoder's default of no transform; metadata read errors fail the conversion.
+The summary's source dimensions describe the stored raster.
+
+RGB and grayscale ICC profiles exposed by the JPEG/PNG/WebP decoders are
+converted to sRGB with relative colorimetric intent; alpha is untouched by the
+color transform. Unsupported or invalid profiles fail explicitly. PNG color
+descriptions take precedence in this order: `cICP`, `iCCP`, `sRGB`, `gAMA`/`cHRM`.
+Supported PNG cICP primaries are BT.709, BT.2020, DCI P3 and Display P3 (codes
+1/9/11/12), with supported SDR transfer curves, identity matrix and full range.
+Untagged inputs assume sRGB. BMP profile extraction is not supported: convert
+profiled BMPs to a tagged PNG first. Out-of-sRGB colors are clipped; there is no
+perceptual gamut mapping or black-point compensation.
+
+Color-managed and 16-bit PNG sources use normalized float samples through color
+conversion and the single resize, then quantize to RGB8/RGBA8 for WebP and the
+metric. This avoids early 8-bit reduction; the CMS itself uses finite-precision
+curves/LUTs (its float transform is approximately 14-bit). Filtering still uses
+encoded sRGB samples with premultiplied alpha, rather than linear-light resizing.
+
+Radiance `.hdr` input is interpreted as **linear sRGB**. Stored samples are used
+directly, including any exposure/color correction already baked into them;
+`EXPOSURE`/`COLORCORR` headers are not reapplied or undone. A fixed-exposure,
+luminance-preserving Reinhard map divides each linear RGB channel by `1 + Y`,
+where `Y = 0.2126 R + 0.7152 G + 0.0722 B`, clips to `[0,1]`, then applies the
+sRGB transfer function. Neutral linear `1` becomes approximately `188/255`.
+Tone mapping precedes resizing. Custom `PRIMARIES`, nonsquare pixels, XYZE,
+PQ/HLG descriptions and other HDR formats are unsupported; preconvert them to
+linear-sRGB RGBE without a `PRIMARIES` header before using this path.
+
+Output is always **8-bit SDR sRGB WebP**, without source ICC/EXIF/XMP metadata.
+The threshold compares the decoded WebP with the **oriented, color-converted,
+tone-mapped, resized and quantized reference**. It does not measure the loss of
+HDR range, wide gamut, source precision or source resolution.
+
 ### Directory batches
 
 Create a separate output directory, then convert the top-level images or include
@@ -221,7 +271,7 @@ output directories are created as needed. For example, `photos/trip/image.jpg`
 becomes `optimized/trip/image.webp`. Existing destination files use the same
 staged replacement as single-image output.
 
-Discovery selects regular files with `.jpg`, `.jpeg`, `.png`, `.webp` or `.bmp`
+Discovery selects regular files with `.jpg`, `.jpeg`, `.png`, `.webp`, `.bmp` or `.hdr`
 extensions, case insensitively. Other extensions, extensionless files, symlink
 entries and special files are ignored. Selected files are still decoded by
 contents; corrupt, animated or unsupported contents fail for that image. An
@@ -258,7 +308,7 @@ remain. Invalid arguments still exit `2`.
 
 ## How quality scoring works
 
-1. Decode the source still image.
+1. Decode the source, apply EXIF orientation, convert supported color descriptions to sRGB, and tone map HDR when applicable.
 2. Resize once if the scale multiplier or dimension bounds change the dimensions.
 3. Treat **that processed image** as the quality reference.
 4. Try several lossy WebP encoder qualities, decoding each trial from memory.
@@ -296,14 +346,14 @@ errors abort either mode, without returning a partial winner.
 - **Optimization scope:** WebP quality, SSIM scores, and output byte sizes are not strictly monotonic. The default heuristic can miss a smaller feasible candidate. Exhaustive mode guarantees the smallest feasible result only among the 101 integer lossy qualities and lossless with the current encoder settings, rather than across all possible WebP configurations.
 - **Threshold cannot always be guaranteed:** even the native lossless path is decoded and scored. Alpha normalization and other conversion subtleties can affect the comparison. If nothing satisfies the threshold, the command fails rather than silently lowering the target.
 - **Still images only:** input format is detected from contents, regardless of extension. Animated PNG (APNG) and WebP are rejected before decoding pixels. GIF and other formats are unsupported. JPEG/BMP decoders expose no animation detection; JPEG multi-picture extensions and concatenated images are not enumerated or guaranteed to be rejected.
-- **Initial color scope:** decoded samples are treated as SDR sRGB-like values. ICC/profile transforms and linear-light resizing are not implemented. Supported 16-bit PNGs are reduced to 8 bits after resizing, losing precision; HDR fidelity is unsupported.
-- **EXIF orientation:** orientation is deliberately not applied. Pre-orient images when orientation matters; stored raster dimensions determine scaling.
-- **Image metadata:** EXIF, XMP and ICC profiles are not promised to carry over into the WebP output.
+- **Color and precision:** supported ICC/PNG descriptions become sRGB, with float preparation for color-managed/16-bit sources. Linear-sRGB Radiance HDR is tone mapped to SDR. Output remains 8-bit; wide gamut/HDR fidelity and linear-light resizing are unsupported. See [color preparation](#color-orientation-and-hdr) for precedence and format limits.
+- **EXIF orientation:** supported JPEG/PNG/WebP orientation is applied before dimension bounds, resizing and scoring.
+- **Image metadata:** source EXIF, XMP and ICC profiles are discarded after preparation; output pixels are sRGB.
 - **Resizing:** `--scale` uses `max(1, round(dimension * scale))` on each axis. Dimension bounds use the smaller of 1, maximum width/source width and maximum height/source height (omitting unspecified bounds), with the same nearest-pixel rounding and one-pixel minimum. Both axes share one ratio; whole-pixel rounding can slightly change the exact aspect ratio, especially for tiny images. Output stays within every supplied bound. Lanczos3 runs once when dimensions change and is bypassed otherwise. Alpha is premultiplied during filtering and returned as straight alpha; hidden RGB does not tint visible edges. Fully opaque processed images use RGB8; others use RGBA8.
 - **Source safety and overwrite policy:** canonical, symlink and hard-link aliases of the input are refused, with another check immediately before replacement. Existing destinations are replaced via a same-directory temporary file and rename; failures before replacement preserve the old destination and clean up staging files. An unrelated destination symlink is replaced as a directory entry, leaving its referent untouched. Dangling destination symlinks are rejected. Concurrent filesystem changes after validation cannot be fully prevented.
 - **File permissions and durability:** the replacement is a new temporary file, so existing destination permissions/ownership/metadata are not preserved (on Unix, new outputs normally have mode `0600`). Contents are synced before replacement, but the containing directory is not synced; power-loss durability is not guaranteed. Abrupt process termination may leave a temporary file. Native Linux/macOS/Windows replacement tests and release smoke checks [passed in hosted CI](https://github.com/bdobrica/WebPTune/actions/runs/39074512319); this validates the tested runner filesystems.
 - **Output failures:** write, flush, sync and rename errors return nonzero. Broken stdout pipes fail too; a partial stdout payload cannot be rolled back. Shell redirection creates/truncates its target before the program runs, so file preservation applies to `-o path`, not `-o - > path`. Keep the redirection target separate from the source.
-- **Safety limits:** headers are checked before pixel decoding: 100 million source pixels, 16,383 pixels per output axis after scaling, and a 1 GiB estimated working-memory budget including metric padding and resize buffers. This conservative estimate permits 2000×2000 at full scale, while 2048×2048 requires downscaling. Decoder limits are configured, but they are best effort. Headers/metadata can allocate earlier (the JPEG decoder buffers compressed input), and the estimate is not a measured peak-memory guarantee.
+- **Safety limits:** headers are checked before pixel decoding: 100 million source pixels, 16,383 pixels per output axis after scaling, and a 1 GiB estimated working-memory budget including metric padding, orientation/color and resize buffers. Untagged 8-bit 2000×2000 remains permitted at full scale; color-managed/16-bit/HDR sources can require tighter bounds. ICC parsing caps profile size at 4 MiB, CLUT size at 1 MiB and TRC length at 65,536; PNG metadata inspection has a 16 MiB decoder budget. Decoder limits are best effort. Headers/metadata can allocate earlier (the JPEG decoder buffers compressed input), and the estimate is not a measured peak-memory guarantee.
 - **Corrupt input:** header/pixel decoder errors propagate as failures. Detection follows the underlying decoders; it is not an exhaustive container-integrity check, and permissive decoders can accept recoverable damage or trailing data.
 
 ## Exit behavior
@@ -337,11 +387,13 @@ and the repository toolchain, including native replacement tests. It validates
 builds without publishing packages, tags or binaries. The full matrix
 [passed on commit `16cfe64`](https://github.com/bdobrica/WebPTune/actions/runs/39074512319).
 
-The suite covers argument and allocation limits, CLI process behavior, all four
+The suite covers argument and allocation limits, CLI process behavior, all five
 input formats, rounded/tiny resizing, width/height bounds and option conflicts,
 RGB/RGBA normalization, grayscale/16-bit
 conversion, transparent edges, animation rejection, corrupt/oversized inputs,
-EXIF behavior, source preservation and empty stdout on failure. Candidate tests
+all eight EXIF orientations in JPEG/PNG/WebP, ICC conversion and PNG color
+precedence, independent Display P3/gamma/tone-map oracles, late 16-bit
+quantization, source preservation and empty stdout on failure. Candidate tests
 cover every integer lossy quality, lossless, alpha semantics, dimension/layout
 validation and decode errors. Trial scores are verified through an independent
 decode and one-shot metric path. Search tests cover nonmonotonic scores/sizes,

@@ -35,7 +35,14 @@ fn main() -> Result<()> {
 
     let directory = tempdir()?;
     let mut verified = Vec::new();
-    for name in ["rgb.png", "rgba.png"] {
+    for (name, (width, height)) in [
+        ("rgb.png", (9, 6)),
+        ("rgba.png", (9, 6)),
+        ("oriented.jpg", (6, 9)),
+        ("display-p3.png", (9, 6)),
+        ("linear16.png", (2, 1)),
+        ("linear.hdr", (4, 1)),
+    ] {
         let source = directory.path().join(name);
         let original = fs::read(
             Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -73,7 +80,7 @@ fn main() -> Result<()> {
         let pixels = reference.pixels();
         let decoded = image::load_from_memory_with_format(&bytes, ImageFormat::WebP)?;
         ensure!(
-            decoded.width() == 9 && decoded.height() == 6,
+            decoded.width() == width && decoded.height() == height,
             "incorrect scaled dimensions"
         );
         let (candidate, channels, descriptor) = if pixels.has_alpha() {
@@ -91,18 +98,32 @@ fn main() -> Result<()> {
             (decoded.to_rgb8().into_raw(), 3, PixelDescriptor::RGB8_SRGB)
         };
         // Bypass the application's cached metric and pixel-view helper.
-        let source_view = PixelSlice::new(pixels.as_bytes(), 9, 6, 9 * channels, descriptor)?;
-        let output_view = PixelSlice::new(&candidate, 9, 6, 9 * channels, descriptor)?;
+        let source_view = PixelSlice::new(
+            pixels.as_bytes(),
+            width,
+            height,
+            width as usize * channels,
+            descriptor,
+        )?;
+        let output_view = PixelSlice::new(
+            &candidate,
+            width,
+            height,
+            width as usize * channels,
+            descriptor,
+        )?;
         let score = compute_ssimulacra2(&source_view, &output_view)?;
         ensure!(
             score.is_finite() && score >= 90.0,
             "written score {score} is below 90"
         );
-        println!("{name}: file/stdout match; 9x6; independently measured score {score:.6}");
+        println!(
+            "{name}: file/stdout match; {width}x{height}; independently measured score {score:.6}"
+        );
         verified.push((name, original, bytes));
     }
     ensure!(
-        fs::read_dir(directory.path())?.count() == 3,
+        fs::read_dir(directory.path())?.count() == verified.len() + 1,
         "unexpected staging files"
     );
 
@@ -160,10 +181,10 @@ fn main() -> Result<()> {
         );
     }
     ensure!(
-        fs::read_dir(&batch_output)?.count() == 2
+        fs::read_dir(&batch_output)?.count() == verified.len()
             && fs::read_dir(batch_output.join("nested"))?.count() == 1,
         "unexpected batch staging files"
     );
-    println!("batch: recursive two-worker RGB/RGBA output matches independently verified single-image bytes");
+    println!("batch: recursive two-worker RGB/RGBA, EXIF, ICC, 16-bit and HDR output matches independently verified single-image bytes");
     Ok(())
 }

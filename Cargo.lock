@@ -614,6 +614,7 @@ dependencies = [
  "clap",
  "fast-ssim2",
  "image",
+ "moxcms",
  "png",
  "same-file",
  "tempfile",

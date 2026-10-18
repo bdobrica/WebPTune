@@ -1,6 +1,6 @@
 # Implementation Plan — webptune
 
-**Status:** Phases 0–8 complete; v0.1.0 tagged after native Linux/macOS/Windows validation; Phase 9 maximum-dimension resizing, exhaustive search, size policies, quiet mode and bounded directory batches implemented · **Target:** v0.1.0 MVP plus Phase 9 follow-up · **Language:** Rust (edition 2021)
+**Status:** Phases 0–8 complete; v0.1.0 tagged after native Linux/macOS/Windows validation; Phase 9 maximum-dimension resizing, exhaustive search, size policies, quiet mode, bounded directory batches and color/orientation/16-bit/HDR preparation implemented · **Target:** v0.1.0 MVP plus Phase 9 follow-up · **Language:** Rust (edition 2021)
 
 ## 1. Purpose and scope
 
@@ -10,7 +10,7 @@ The objective is **minimize encoded bytes subject to a measured quality floor**,
 
 ### Goals
 
-1. Accept common still-image formats (JPEG, PNG, WebP, BMP) and convert to still WebP.
+1. Accept common still-image formats (JPEG, PNG, WebP, BMP) and convert to still WebP. Phase 9 adds linear-sRGB Radiance HDR input and color/orientation preparation.
 2. Support `--threshold` as a native SSIMULACRA2 score (default `80`, valid `0..=100`).
 3. Support `--scale` (default `1.0`, valid `0 < scale <= 1.0`) with Lanczos3 resizing. Phase 9 adds maximum width/height bounds as alternatives.
 4. Preserve alpha when present, with alpha-aware quality comparisons.
@@ -23,7 +23,7 @@ The objective is **minimize encoded bytes subject to a measured quality floor**,
 
 ### Non-goals for v0.1
 
-Animated images, upscaling, metadata/ICC profile preservation, EXIF orientation preservation beyond explicitly tested decoder behavior, HDR/16-bit fidelity, arbitrary WebP encoder parameter sweeps, global-optimum guarantees, streaming input, and an image-comparison GUI. Batch/directory processing was deferred from the MVP and is implemented after the v0.1.0 tag in section 26. Unsupported cases must be documented or rejected, not quietly mishandled.
+Animated images, upscaling, metadata/ICC profile preservation, HDR/16-bit output fidelity, arbitrary WebP encoder parameter sweeps, global-optimum guarantees, streaming input, and an image-comparison GUI. Batch/directory processing and color/orientation/high-precision preparation were deferred from the MVP and are implemented after the v0.1.0 tag in sections 26–27. Unsupported cases must be documented or rejected, not quietly mishandled.
 
 ## 2. Correctness decisions
 
@@ -47,7 +47,7 @@ Lossless WebP preserves displayed pixels, but may normalize RGB values hidden un
 
 ### 2.4 Color and metadata
 
-Initial implementation targets 8-bit, SDR, sRGB-like raster pixels. Decoding or converting wide-gamut images without explicit color management can change appearance. Document that v0.1 does not preserve EXIF, XMP, ICC, animation, or 16-bit source precision; do not advertise fully faithful conversion. Define EXIF orientation handling explicitly: either implement orientation before scaling and scoring, or reject/clearly document inputs where orientation is not applied. For initial simplicity, **do not promise automatic EXIF autorotation**; track it as a release limitation.
+The tagged v0.1.0 implementation targets 8-bit, SDR, sRGB-like raster pixels without automatic EXIF orientation or color management. Current source adds EXIF orientation before bounds/resize, RGB/grayscale ICC and PNG color conversion to sRGB, float preparation of 16-bit sources, and linear-sRGB Radiance HDR tone mapping (section 27). Output remains 8-bit SDR sRGB without source ICC/EXIF/XMP metadata. Scores compare the final processed reference, including these conversions; they do not measure loss of source gamut, dynamic range or precision. Do not advertise fully faithful HDR/16-bit conversion.
 
 ## 3. Suggested architecture
 
@@ -65,6 +65,7 @@ webptune/
 │   ├── main.rs              # parse CLI, exit codes, stderr
 │   ├── cli.rs               # clap input model and validation
 │   ├── batch.rs             # directory mapping, preflight and bounded workers
+│   ├── color.rs             # ICC/PNG descriptions and HDR-to-SDR preparation
 │   ├── limits.rs            # pixel, memory and checked buffer arithmetic
 │   ├── input.rs             # decode, limits, resize, RGBA/RGB
 │   ├── metric.rs            # reusable reference and scoring
@@ -316,7 +317,7 @@ Measure total wall time, peak RSS, number of trial encodes, encoding time, decod
 1. `--search heuristic|exhaustive` is implemented (section 22), with a minimum across the *fixed discrete candidate set* for exhaustive search. Additional intermediate search strategies remain optional future work.
 2. `--max-bytes`, `--skip-if-larger` and quiet reports are implemented (section 23). JSON reports and stdin input remain optional future work.
 3. Directory batches with bounded workers are implemented (section 26). Per-image memory guards remain in force; a total batch memory cap remains future work.
-4. Preserve ICC/EXIF orientation and add color-managed / 16-bit paths.
+4. Color-managed/16-bit preparation, EXIF orientation and a Radiance HDR-to-SDR path are implemented (section 27). Metadata copying, HDR output, PQ/HLG and other HDR formats remain outside this path.
 5. Advanced WebP parameters and alpha-quality tuning; support animation as a separate workflow.
 6. Standalone performance benchmark dataset and published platform-specific binaries.
 
@@ -493,9 +494,11 @@ pixels and 8-bit RGBA when any processed alpha is below 255. Grayscale expands
 to RGB/RGBA; 16-bit PNG is reduced to 8 bits. Without resizing, 8-bit RGBA retains
 hidden colors. Resizing may normalize invisible colors.
 
-ICC profiles, EXIF orientation and metadata are not applied or preserved.
-The EXIF orientation-6 fixture proves stored raster orientation is retained.
-There is no color-managed, wide-gamut, HDR or 16-bit-fidelity pathway in v0.1.
+At the tagged v0.1.0 commit, ICC profiles, EXIF orientation and metadata were
+not applied or preserved; the orientation-6 fixture proved stored raster
+orientation was retained. Current source supersedes these preparation decisions
+with section 27. HDR/16-bit output fidelity and metadata preservation remain
+unsupported.
 
 ### Resize memory refinement and fixtures
 
@@ -1128,3 +1131,87 @@ compares payloads to independently scored single-file output. The existing
 Linux/macOS/Windows CI matrix runs the new tests and extended smoke checker;
 the earlier hosted results in section 24 describe the tagged implementation,
 not this later feature.
+
+## 27. Phase 9 — Color, orientation and high-precision preparation
+
+The fifth deferred item adds automatic source preparation before the existing
+encoder/metric/search/output pipeline. `input::load` and `load_with_resize` keep
+their public signatures. EXIF orientation is read through `ImageDecoder`, then
+all eight rotations/reflections are applied before calculating bounds or
+resizing. Source dimensions in `PreparedImage` and CLI reports remain the stored
+raster dimensions; output dimensions use the displayed orientation. Missing or
+invalid tags use the decoder's no-transform default; metadata read errors fail.
+JPEG, PNG and WebP orientation paths are tested independently by coordinate
+mapping, including reflected/transposed cases, alpha and asymmetric bounds.
+
+The private `color` module converts supported RGB/grayscale ICC profiles to
+sRGB using moxcms with relative colorimetric intent. Alpha is copied separately
+from RGB/gray transform rows. Unsupported/invalid profiles and gray profiles on
+RGB rasters fail before output. CMYK profiles are rejected because the JPEG
+decoder has already converted those pixels to RGB. Untagged images assume
+sRGB; BMP's decoder exposes no profile extraction. Metadata is used only in
+preparation and discarded: source ICC/EXIF/XMP is never copied to the WebP.
+
+PNG header inspection uses the same seekable reader before the image decoder;
+it does not decode a second pixel raster. Color precedence is cICP, iCCP, sRGB,
+then gAMA/cHRM. cICP supports full-range RGB, identity matrix, primaries
+BT.709/BT.2020/DCI P3/Display P3 and supported SDR transfer curves. Unknown
+primaries/transfers, narrow range, nonidentity matrices and PQ/HLG are errors.
+gAMA supplies the inverse encoding gamma and cHRM supplies source primaries and
+white point. moxcms 0.8.1's CICP update helper incorrectly returns false on
+success, so supported standard profiles and transfer curves are constructed
+explicitly. Profiles are limited to 4 MiB, CLUTs to 1 MiB and TRCs to 65,536
+elements; the extra PNG metadata reader has a 16 MiB allocation budget. Codec
+metadata buffers may allocate before these checks and are not a process cap.
+
+Color-managed and 16-bit inputs convert to normalized RGBA32F, preserving source
+precision through the color transform and single Lanczos3 resize. Only the
+final reference quantizes to RGB8/RGBA8, with fully opaque results using RGB.
+moxcms's float transforms have finite LUT precision (approximately 14-bit);
+this is not a promise of lossless 16-bit processing. Out-of-sRGB samples are
+clipped before filtering; no perceptual gamut mapping or black-point
+compensation is requested. Resizing remains in encoded sRGB with premultiplied
+alpha, preserving the existing untagged 8-bit path and its output bytes.
+
+Radiance RGBE `.hdr` adds a concrete HDR-to-SDR input path, detected by contents
+and included in batch extension discovery. Stored samples are assumed linear
+sRGB and use a fixed, luminance-preserving Reinhard map: each channel is divided
+by `1 + 0.2126 R + 0.7152 G + 0.0722 B`, clipped, then sRGB-encoded. Intermediate
+luminance arithmetic uses f64 and nonfinite/negative samples fail. Tone mapping
+precedes resizing, and no automatic exposure adaptation is performed. Stored
+EXPOSURE/COLORCORR effects are neither reapplied nor undone. Custom PRIMARIES,
+nonsquare pixels and XYZE are rejected. PQ/HLG, other HDR formats, HDR output
+and adjustable tone mapping remain unsupported. Output is always 8-bit SDR
+sRGB; the threshold measures the final oriented/color-converted/tone-mapped/
+resized/quantized reference rather than source HDR/gamut/precision fidelity.
+
+Pre-decode memory accounting includes orientation copies, decoded sample width,
+RGBA32F conversion, bounded transform row scratch and oriented resize buffers.
+The existing 1 GiB estimate and source/output limits remain; high-precision
+preparation can require smaller bounds than untagged 8-bit processing. Batch
+workers apply the same per-image guards and can still multiply aggregate memory.
+
+No package versions or native build prerequisites change. Existing transitive
+moxcms 0.8.1 becomes a direct dependency; png 0.18.1 moves from development to
+runtime use; image's pure-Rust HDR feature is enabled. Seven generated fixtures
+cover sRGB/Display P3/linear RGB/linear gray ICC, linear RGBA16 PNG and neutral
+RGBE intensities. ICC timestamps are fixed after serialization because moxcms's
+writer otherwise embeds wall-clock time, including when a source profile date
+is supplied. Existing fixtures remain byte-identical.
+
+New integration tests compare Display P3 with an independent linear matrix,
+linear/gray conversion with sRGB equations, and HDR with an independent tone-map
+oracle. A 16-bit resize case distinguishes late from early quantization. Tests
+check color precedence, all EXIF transformations, extra memory guards, parser
+limits and unsupported metadata, preserved alpha/source/destination, empty
+stdout and cleanup on errors, stripped output metadata, independently scored
+threshold-100 WebPs and byte equality with parallel batch output. The release
+smoke checker adds oriented JPEG, Display P3, 16-bit and HDR file/stdout cases
+and includes all six fixtures in its recursive two-worker batch comparison.
+
+Local Linux validation (Rust 1.89.0): formatting, Clippy with denied warnings,
+all 120 tests, locked/offline release build and expanded release smoke passed.
+The six release cases independently scored at least 90, retained source/alpha,
+and matched file/stdout and recursive two-worker batch bytes. The existing
+Linux/macOS/Windows matrix runs this expanded coverage; historical results for
+the tagged implementation remain in section 24.

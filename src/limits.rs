@@ -162,6 +162,69 @@ fn estimated_processing_bytes(source: (u32, u32), output: (u32, u32)) -> Result<
         .context("combined memory estimate overflow")
 }
 
+/// Include orientation copies, float color preparation and bounded row scratch.
+/// The original dimensions remain available for source guards; resize scratch
+/// uses the oriented raster, whose axes may have exchanged places.
+pub fn validate_preparation_dimensions(
+    source: (u32, u32),
+    oriented: (u32, u32),
+    output: (u32, u32),
+    alpha: bool,
+    decoded_bytes_per_pixel: usize,
+    orientation: bool,
+    float: bool,
+) -> Result<()> {
+    ensure!(
+        (1..=16).contains(&decoded_bytes_per_pixel),
+        "decoded pixel size must be in 1..=16 bytes"
+    );
+    // Float preparation uses RGBA until final normalization, including opaque
+    // sources. Its alpha-aware resize requires the float source allowance.
+    validate_resize_dimensions(oriented, output, alpha || float)?;
+    let source_pixels = pixel_count(source.0, source.1)?;
+    ensure!(
+        source_pixels == pixel_count(oriented.0, oriented.1)?,
+        "orientation changed pixel count"
+    );
+    let decoded = decoded_bytes_per_pixel as u64;
+    // The existing source allowance is eight bytes per pixel. Color conversion
+    // may hold the decoded buffer and RGBA32F together; rotation may copy it.
+    let per_pixel = (if float { decoded + 16 } else { decoded }).max(if orientation {
+        decoded * 2
+    } else {
+        decoded
+    });
+    let extra = source_pixels
+        .checked_mul(per_pixel.saturating_sub(SOURCE_BYTES_PER_PIXEL))
+        .context("preparation memory estimate overflow")?;
+    let scratch = if float {
+        u64::from(oriented.0) * 6 * 4
+    } else {
+        0
+    };
+    let mut bytes = estimated_processing_bytes(source, output)?;
+    if oriented != output {
+        bytes = bytes
+            .checked_add(checked_buffer_len(oriented.0, output.1, 16)? as u64)
+            .and_then(|b| {
+                b.checked_add(if alpha || float {
+                    source_pixels * 16
+                } else {
+                    0
+                })
+            })
+            .and_then(|b| b.checked_add(u64::from(oriented.0.max(oriented.1)) * 8))
+            .context("preparation resize estimate overflow")?;
+    }
+    bytes = bytes
+        .checked_add(extra)
+        .and_then(|b| b.checked_add(scratch))
+        .context("preparation memory estimate overflow")?;
+    ensure!(bytes <= MAX_ESTIMATED_BYTES,
+        "estimated working memory including orientation/color buffers is {bytes} bytes; budget is {MAX_ESTIMATED_BYTES} bytes; use smaller dimensions or a smaller source image");
+    Ok(())
+}
+
 /// Validate prospective output dimensions before resize/metric/codec allocation.
 ///
 /// The estimate includes the original decode and metric padding, so downscaling

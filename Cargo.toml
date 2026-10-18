@@ -14,13 +14,12 @@ publish = false
 anyhow = "1"
 clap = { version = "~4.5", features = ["derive"] }
 fast-ssim2 = "0.9"
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp", "hdr"] }
+moxcms = "0.8.1"
+png = "0.18"
 same-file = "1"
 tempfile = "3"
 webp = { version = "0.3", default-features = false }
-
-[dev-dependencies]
-png = "0.18"
 
 [[example]]
 name = "api_spike"

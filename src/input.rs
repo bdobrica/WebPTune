@@ -1,23 +1,28 @@
 //! Decode and prepare a single reference image without writing output.
 //!
-//! Pixels are treated as SDR, sRGB-like samples. ICC transforms and EXIF
-//! orientation are not applied; metadata is discarded. Sixteen-bit sources
-//! are reduced to eight bits after resizing. Animation is rejected through
-//! the PNG/WebP decoder APIs; JPEG/BMP have no animation API here.
+//! EXIF orientation precedes resizing. Supported ICC/PNG color descriptions
+//! become sRGB, with float processing for color-managed and 16-bit sources.
+//! Linear-sRGB Radiance HDR is tone mapped to SDR. Only the final reference is
+//! quantized to eight bits; metadata is discarded. Animation is rejected.
 
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
 
 use anyhow::{bail, ensure, Context, Result};
-use image::codecs::{bmp::BmpDecoder, jpeg::JpegDecoder, png::PngDecoder, webp::WebPDecoder};
+use image::codecs::{
+    bmp::BmpDecoder, hdr::HdrDecoder, jpeg::JpegDecoder, png::PngDecoder, webp::WebPDecoder,
+};
+use image::metadata::Orientation;
 use image::{
     imageops, DynamicImage, GenericImageView, ImageDecoder, ImageFormat, ImageReader, Limits,
     RgbImage, RgbaImage,
 };
 
+use crate::color::SourceColor;
 use crate::limits::{
-    checked_buffer_len, validate_resize_dimensions, Resize, MAX_ESTIMATED_BYTES, MAX_SOURCE_PIXELS,
+    checked_buffer_len, validate_preparation_dimensions, Resize, MAX_ESTIMATED_BYTES,
+    MAX_SOURCE_PIXELS,
 };
 
 /// Packed, owned 8-bit reference pixels. Fully opaque images use RGB.
@@ -95,9 +100,11 @@ pub fn load_with_resize(path: &Path, resize: Resize) -> Result<PreparedImage> {
         .with_guessed_format()
         .with_context(|| format!("cannot identify input '{}'", path.display()))?;
     let format = reader.format();
-    let reader = reader.into_inner();
+    let mut reader = reader.into_inner();
+    let mut color = None;
     let decoder: Box<dyn ImageDecoder> = match format {
         Some(ImageFormat::Png) => {
+            color = Some(SourceColor::png(&mut reader)?);
             let decoder = PngDecoder::with_limits(reader, decoder_limits())
                 .context("cannot read PNG header")?;
             ensure!(
@@ -120,19 +127,62 @@ pub fn load_with_resize(path: &Path, resize: Resize) -> Result<PreparedImage> {
         Some(ImageFormat::Bmp) => {
             Box::new(BmpDecoder::new(reader).context("cannot read BMP header")?)
         }
-        Some(format) => bail!("unsupported input format {format:?}; supported still formats: JPEG, PNG, WebP, BMP"),
-        None => bail!("unsupported or unrecognized input format; supported still formats: JPEG, PNG, WebP, BMP"),
+        Some(ImageFormat::Hdr) => {
+            let decoder = HdrDecoder::new(reader).context("cannot read Radiance HDR header")?;
+            let metadata = decoder.metadata();
+            ensure!(!metadata.custom_attributes.iter().any(|(key, _)| key == "PRIMARIES"),
+                "custom Radiance HDR PRIMARIES are unsupported; provide linear sRGB samples without PRIMARIES");
+            ensure!(metadata.pixel_aspect_ratio.is_none_or(|ratio| ratio == 1.0),
+                "non-square Radiance HDR pixels are unsupported");
+            let mut hdr = SourceColor::default();
+            hdr.hdr = true;
+            color = Some(hdr);
+            Box::new(decoder)
+        }
+        Some(format) => bail!("unsupported input format {format:?}; supported still formats: JPEG, PNG, WebP, BMP, Radiance HDR"),
+        None => bail!("unsupported or unrecognized input format; supported still formats: JPEG, PNG, WebP, BMP, Radiance HDR"),
     };
-    prepare(decoder, resize).with_context(|| format!("cannot prepare input '{}'", path.display()))
+    prepare(decoder, resize, color)
+        .with_context(|| format!("cannot prepare input '{}'", path.display()))
 }
 
-fn prepare(mut decoder: Box<dyn ImageDecoder>, resize: Resize) -> Result<PreparedImage> {
+fn prepare(
+    mut decoder: Box<dyn ImageDecoder>,
+    resize: Resize,
+    color: Option<SourceColor>,
+) -> Result<PreparedImage> {
     let original_dimensions = decoder.dimensions();
-    let dimensions = resize.dimensions(original_dimensions)?;
-    validate_resize_dimensions(
+    let orientation = decoder
+        .orientation()
+        .context("cannot read EXIF orientation")?;
+    let swapped = matches!(
+        orientation,
+        Orientation::Rotate90
+            | Orientation::Rotate270
+            | Orientation::Rotate90FlipH
+            | Orientation::Rotate270FlipH
+    );
+    let oriented_dimensions = if swapped {
+        (original_dimensions.1, original_dimensions.0)
+    } else {
+        original_dimensions
+    };
+    let dimensions = resize.dimensions(oriented_dimensions)?;
+    let color = match color {
+        Some(color) => color,
+        None => SourceColor::icc(decoder.icc_profile().context("cannot read ICC profile")?)?,
+    };
+    let float = color.needs_float(
+        decoder.color_type().bits_per_pixel() / u16::from(decoder.color_type().channel_count()) > 8,
+    );
+    validate_preparation_dimensions(
         original_dimensions,
+        oriented_dimensions,
         dimensions,
         decoder.color_type().has_alpha(),
+        usize::from(decoder.color_type().bytes_per_pixel()),
+        orientation != Orientation::NoTransforms,
+        float,
     )?;
     let bytes = checked_buffer_len(
         original_dimensions.0,
@@ -150,14 +200,18 @@ fn prepare(mut decoder: Box<dyn ImageDecoder>, resize: Resize) -> Result<Prepare
     decoder
         .set_limits(limits)
         .context("cannot apply decoder limits")?;
-    let source = DynamicImage::from_decoder(decoder).context("cannot decode image pixels")?;
+    let mut source = DynamicImage::from_decoder(decoder).context("cannot decode image pixels")?;
     ensure!(
         source.dimensions() == original_dimensions,
         "decoded dimensions differ from header"
     );
+    source.apply_orientation(orientation);
+    if float {
+        source = color.convert(source)?;
+    }
 
     // Also skip resampling when rounding leaves the dimensions unchanged.
-    let processed = if dimensions == original_dimensions {
+    let processed = if dimensions == oriented_dimensions {
         source
     } else if source.color().has_alpha() {
         resize_alpha(source, dimensions)

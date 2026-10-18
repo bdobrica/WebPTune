@@ -1,18 +1,21 @@
 # Dependencies and native builds
 
 Review date: 2026-10-18. Versions below come from `Cargo.lock` and the resolved
-Cargo feature graph. No dependency versions changed during Phase 8.
+Cargo feature graph. No dependency versions changed during Phase 8. Phase 9
+color preparation promotes existing transitive moxcms and development png to
+runtime dependencies and enables image's HDR codec; locked versions stay fixed.
 
 | Direct dependency | Locked version | Purpose / enabled scope | Declared license |
 |---|---|---|---|
 | anyhow | 1.0.104 | Contextual errors | MIT OR Apache-2.0 |
 | clap | 4.5.61 | CLI, derive; constrained to the 4.5 series | MIT OR Apache-2.0 |
 | fast-ssim2 | 0.9.0 | Cached RGB/RGBA SSIMULACRA2; empty default feature set | BSD-2-Clause |
-| image | 0.25.10 | Only JPEG, PNG, WebP and BMP; defaults disabled | MIT OR Apache-2.0 |
+| image | 0.25.10 | JPEG, PNG, WebP, BMP and Radiance HDR; defaults disabled | MIT OR Apache-2.0 |
+| moxcms | 0.8.1 | Pure-Rust ICC transforms and standard profile definitions | BSD-3-Clause OR Apache-2.0 |
+| png | 0.18.1 | PNG color metadata inspection and deterministic fixtures | MIT OR Apache-2.0 |
 | same-file | 1.0.6 | File identity, including hard links | Unlicense/MIT |
 | tempfile | 3.27.0 | Same-directory staging and replacement | MIT OR Apache-2.0 |
 | webp | 0.3.1 | Fallible native encoding; defaults disabled | MIT OR Apache-2.0 |
-| png (development) | 0.18.1 | Deterministic fixtures, including APNG | MIT OR Apache-2.0 |
 
 `fast-ssim2` requires Rust 1.89.0 and `image` requires 1.88.0; the repository
 pins 1.89.0 with rustfmt and Clippy. Runtime SIMD dispatch is provided by the
@@ -20,6 +23,16 @@ metric implementation. Its optional Rayon feature is not enabled. Disabling
 `webp` defaults avoids its optional `image` integration, but its dependency
 `libwebp-sys` still has its own default `std`, `parallel` and `neon` features.
 Do not infer that all native codec parallel/SIMD features are disabled.
+
+`moxcms` 0.8.1 requires Rust 1.85 and was already used by `image`; adding it
+directly adds no package or version change. Its default matrix/shaper/LUT and
+platform SIMD features remain enabled. PNG inspection uses the existing png
+0.18.1 implementation, with an explicit metadata allocation budget. HDR uses
+image's pure-Rust RGBE decoder; there is no new native color-management library
+or system dependency. Float transforms have finite LUT precision (documented
+by moxcms as approximately 14-bit), so high-precision preparation does not imply
+lossless 16-bit or HDR output. The source-color policy and parser limits are in
+[README](README.md#color-orientation-and-hdr) and [PLAN section 27](PLAN.md#27-phase-9--color-orientation-and-high-precision-preparation).
 
 ## Native codec
 

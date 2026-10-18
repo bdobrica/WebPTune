@@ -46,10 +46,12 @@ cargo run --release --locked --example smoke -- target/release/webptune
 
 Append `.exe` to the final binary path on Windows. The smoke checker launches
 the binary directly, avoiding shell text encoding of binary stdout. For each
-RGB/RGBA fixture it checks replacement of an existing destination, byte equality
-of file/stdout output, source preservation, decoded 9×6 dimensions, alpha,
+RGB/RGBA, oriented JPEG, Display P3, 16-bit PNG and Radiance HDR fixture it checks
+replacement of an existing destination, byte equality of file/stdout output,
+source preservation, expected oriented/scaled dimensions, alpha,
 independently recomputed SSIMULACRA2 >=90, and staging cleanup. It also verifies
-the reported version against Cargo metadata. Full integration tests cover the
+the reported version against Cargo metadata and a recursive two-worker batch
+against the verified single-file bytes. Full integration tests cover the
 larger threshold/input/scale/failure matrix.
 
 For a clean build, clone the intended commit into a fresh directory with no
