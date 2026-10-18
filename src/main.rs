@@ -38,7 +38,7 @@ fn main() -> Result<()> {
 fn convert(args: &Args) -> Result<output::WriteOutcome> {
     args.validate_paths()?;
     let reference = input::load_with_resize(&args.input, args.resize())?;
-    let evaluator = TrialEvaluator::new(reference.pixels())?;
+    let evaluator = TrialEvaluator::with_options(reference.pixels(), args.encoder)?;
     let result = search::search_with_mode(&evaluator, args.threshold, args.search)?;
     let mut report = String::new();
     if args.batch && !args.quiet {
@@ -53,6 +53,7 @@ fn convert(args: &Args) -> Result<output::WriteOutcome> {
         )?;
     }
     if args.verbose {
+        writeln!(report, "Encoder settings: {:?}", args.encoder)?;
         for trial in result.trials() {
             writeln!(
                 report,

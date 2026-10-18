@@ -43,11 +43,12 @@ source: the shell opens it before the application starts.
 - Automatic EXIF orientation and RGB/grayscale ICC conversion to sRGB.
 - Float processing for 16-bit sources and HDR-to-SDR tone mapping.
 - WebP output in either lossy or lossless mode.
+- Configurable compression method, lossless effort and lossy alpha quality.
 - Optional byte ceiling and skipping of results larger than the source file.
 - Directory batches with optional recursion and a configurable worker limit.
 - Perceptual quality target via native SSIMULACRA2 score (`0..100`, default `80`).
 - Optional Lanczos3 downscaling by a multiplier or maximum width/height.
-- Transparency-aware evaluation and alpha preservation.
+- Transparency-aware evaluation and exact alpha by default.
 - Binary-safe stdout (`-o -`) for command-line pipelines.
 - In-memory candidate evaluation with lossless comparison.
 - Explicit errors when no candidate can be verified to meet the threshold.
@@ -115,6 +116,12 @@ webptune --input INPUT --output OUTPUT [OPTIONS]
 | `--scale-width <PIXELS>` | Maximum output width, preserving aspect ratio; alternative to `--scale` | Unbounded |
 | `--scale-height <PIXELS>` | Maximum output height, preserving aspect ratio; alternative to `--scale` | Unbounded |
 | `--search <MODE>` | `heuristic` (bounded search) or `exhaustive` (all 102 fixed candidates) | `heuristic` |
+| `--method <0..6>` | Compression method for both modes; 0 fastest, 6 slowest | `4` |
+| `--lossless-effort <0..100>` | Compression effort of the lossless candidate; 0 fastest, 100 slowest | `75` |
+| `--alpha-quality <0..100>` | Alpha quality of lossy candidates; 100 preserves alpha exactly | `100` |
+| `--alpha-filtering <MODE>` | Lossy alpha predictive filtering: `none`, `fast`, `best` | `fast` |
+| `--sharp-yuv` | Slower, sharper RGB-to-YUV conversion in lossy candidates | Off |
+| `--exact` | Preserve hidden RGB under fully transparent pixels in the lossless candidate | Off |
 | `--skip-if-larger` | Skip writing when the selected WebP is strictly larger than the input file | Off |
 | `--max-bytes <BYTES>` | Inclusive positive integer byte ceiling; fail if the smallest tested feasible result exceeds it | Unlimited |
 | `-q, --quiet` | Suppress success/skip reports; retain errors; conflicts with verbose | Off |
@@ -205,6 +212,45 @@ byte-limit failures take priority over skipping and still exit nonzero.
 stderr and the same exit codes and output bytes. It conflicts with `--verbose`.
 It does not suppress explicit help/version output. JSON reporting remains a
 possible future enhancement.
+
+### Encoder tuning
+
+These controls are available on the source branch after v0.1.0. For example:
+
+```bash
+webptune -i photo.png -o photo.webp --method 6 --sharp-yuv --lossless-effort 100
+webptune -i artwork.png -o artwork.webp --alpha-quality 80 --alpha-filtering best -t 90
+webptune -i artwork.png -o exact.webp --exact --threshold 100
+```
+
+`--method` controls the compression speed/size tradeoff for both lossy and
+lossless trials. `--lossless-effort` sets the lossless encoder's quality parameter
+as compression effort; it does not reduce pixel fidelity. Higher effort can
+take longer and does not guarantee a smaller selected output. The lossy RGB
+quality parameter remains selected by search.
+
+`--alpha-quality 100` preserves alpha exactly. Lower values permit quantized
+alpha **only in lossy trials**. The actual decoded alpha participates in the
+quality score, so lowering this setting never bypasses the threshold. It may
+cause search to select lossless instead. `--alpha-filtering` selects alpha
+prediction during compression and does not itself lower alpha quality. These
+alpha options have no effect on fully opaque processed inputs.
+
+`--sharp-yuv` changes lossy color conversion and has no effect on lossless.
+`--exact` affects only the lossless candidate, preserving RGB even where alpha
+is zero. Without it, the encoder can discard invisible RGB for compression.
+The metric ignores RGB hidden under alpha zero, so threshold 100 alone does not
+promise preservation of those samples. `--exact` does not force lossless selection;
+its guarantee applies when the selected mode is lossless.
+
+The lossless candidate always keeps full alpha, disables near-lossless
+preprocessing, and is decoded and scored. All settings stay fixed throughout
+heuristic or exhaustive search and apply to each batch image. Exhaustive search
+still checks 102 candidates at these settings; it does not search combinations
+of methods, alpha qualities or other controls. Verbose stderr includes the
+active settings. With no tuning flags, encoded bytes and defaults are unchanged.
+The parameter meanings follow libwebp's
+[encoder controls](https://developers.google.com/speed/webp/docs/cwebp).
 
 ### Color, orientation and HDR
 
@@ -379,7 +425,9 @@ cargo run --release --locked --example smoke -- target/release/webptune
 On Windows append `.exe` to the smoke command's final path. The smoke checker
 executes the release binary for RGB/RGBA inputs, replaces an existing file,
 compares file/stdout bytes, independently decodes/scores them, and verifies
-scaled dimensions, alpha and source preservation.
+scaled dimensions, alpha and source preservation. It also exercises every tuning
+flag with exact RGBA equality at threshold 100 and alpha quality 0, verifying the
+lossless fallback and file/stdout equality.
 
 [CI](.github/workflows/ci.yml) runs the commands above on push, pull request and
 manual dispatch on all three target platforms. Each job uses a fresh checkout
@@ -416,7 +464,11 @@ Unicode names, independent decoded quality/alpha, byte equality with single
 conversions, collision preflight, failure continuation, per-image size policies,
 source preservation and actual worker concurrency bounds. Release smoke also
 checks recursive two-worker output against the verified single-image bytes.
-The suite also retains the Phase 0 API tests.
+Encoder tuning tests compare defaults with the original configuration and
+nondefault trials with direct libwebp encoding, verify measured alpha loss and
+exact hidden RGB, reject invalid CLI/library options, and check both search
+modes, file/stdout equality, byte caps and two-worker batch results. The suite
+also retains the Phase 0 API tests.
 
 The executable matrix crosses 11 fixtures with scales 1/0.5, thresholds
 0/80/90/100, and file/stdout output (176 CLI invocations). Every payload is

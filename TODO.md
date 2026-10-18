@@ -278,7 +278,7 @@ checkout. See [PLAN.md, section 25](PLAN.md#25-v010-release-tag).
 - [x] Add `--skip-if-larger`, `--max-bytes`, JSON reporting or quiet mode.
 - [x] Add batch/directory mode with bounded parallelism.
 - [x] Add color profile support, EXIF orientation and 16-bit/HDR pathway.
-- [ ] Add richer WebP encoder tuning options and alpha-quality controls.
+- [x] Add richer WebP encoder tuning options and alpha-quality controls.
 - [ ] Add stdin input and interrupted-operation cancellation.
 
 Maximum-dimension resizing accepts either or both positive integer bounds,
@@ -372,6 +372,22 @@ formats, 16-bit precision, metadata precedence/errors and parser/memory limits.
 Release file/stdout results meet independently measured score >=90 and match
 recursive two-worker batch output for RGB/RGBA, EXIF, ICC, 16-bit and HDR cases.
 The native CI matrix runs the expanded tests and smoke checker.
+
+Encoder tuning adds `--method`, `--lossless-effort`, `--alpha-quality`,
+`--alpha-filtering`, `--sharp-yuv` and `--exact` in single-image and batch mode.
+Defaults preserve the original encoded bytes. Alpha quantization applies only
+to lossy trials and remains subject to the actual decoded quality score;
+lossless retains full alpha. Settings stay fixed throughout either search mode.
+See [PLAN.md, section 28](PLAN.md#28-phase-9--webp-encoder-tuning-and-alpha-quality).
+
+Local Linux validation (Rust 1.89.0): formatting, Clippy with denied warnings,
+all 126 tests, locked/offline release build and expanded release smoke passed.
+Six new integration tests cover direct codec compatibility, independent scoring,
+alpha quantization and exact hidden RGB, invalid CLI/library values, both search
+modes, file/stdout equality, byte caps, source preservation and parallel batches.
+Release smoke additionally checks all tuning flags with exact RGBA equality at
+threshold 100 despite alpha quality 0. Native CI runs the expanded checks on
+Linux, macOS and Windows.
 
 ## Release acceptance checklist
 

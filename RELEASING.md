@@ -54,6 +54,10 @@ the reported version against Cargo metadata and a recursive two-worker batch
 against the verified single-file bytes. Full integration tests cover the
 larger threshold/input/scale/failure matrix.
 
+The smoke checker also enables all encoder tuning controls and verifies file/stdout
+byte equality and exact RGBA pixels at threshold 100 despite alpha quality 0.
+This checks that lossless remains a full-alpha fallback with nondefault settings.
+
 For a clean build, clone the intended commit into a fresh directory with no
 `target` directory, enter it, and run the commands above. Cargo may reuse its
 download cache; compiled artifacts must be fresh. `--locked` prevents lockfile

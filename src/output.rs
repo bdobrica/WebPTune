@@ -137,6 +137,7 @@ mod tests {
             scale_width: None,
             scale_height: None,
             search: crate::search::SearchMode::Heuristic,
+            encoder: crate::encoder::EncoderOptions::default(),
             skip_if_larger: false,
             max_bytes: None,
             quiet: false,

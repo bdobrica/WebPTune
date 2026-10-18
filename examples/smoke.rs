@@ -186,5 +186,62 @@ fn main() -> Result<()> {
         "unexpected batch staging files"
     );
     println!("batch: recursive two-worker RGB/RGBA, EXIF, ICC, 16-bit and HDR output matches independently verified single-image bytes");
+
+    // Nondefault settings must reach the built executable too. Reduced alpha
+    // quality must not prevent an exact, threshold-100 lossless fallback.
+    let source = directory.path().join("rgba.png");
+    let destination = directory.path().join("tuned.webp");
+    let tuned = |target: &Path| {
+        Command::new(&binary)
+            .arg("-i")
+            .arg(&source)
+            .arg("-o")
+            .arg(target)
+            .args([
+                "--threshold",
+                "100",
+                "--method",
+                "6",
+                "--lossless-effort",
+                "100",
+                "--alpha-quality",
+                "0",
+                "--alpha-filtering",
+                "best",
+                "--sharp-yuv",
+                "--exact",
+                "--verbose",
+            ])
+            .output()
+    };
+    let file = tuned(&destination)?;
+    successful(&file)?;
+    let stdout = tuned(Path::new("-"))?;
+    successful(&stdout)?;
+    let bytes = fs::read(&destination)?;
+    ensure!(
+        file.stdout.is_empty() && stdout.stdout == bytes,
+        "tuned output differs"
+    );
+    let reference = input::load(&source, 1.0)?;
+    let decoded = image::load_from_memory_with_format(&bytes, ImageFormat::WebP)?.to_rgba8();
+    ensure!(
+        decoded.as_raw() == reference.pixels().as_bytes(),
+        "exact lossless fallback changed pixels"
+    );
+    ensure!(
+        String::from_utf8_lossy(&file.stderr).contains("Encoder settings:")
+            && String::from_utf8_lossy(&file.stderr).contains("selected Lossless"),
+        "tuned settings or lossless fallback missing from report"
+    );
+    ensure!(
+        fs::read(&source)? == verified[1].1,
+        "tuned conversion modified source"
+    );
+    ensure!(
+        fs::read_dir(directory.path())?.count() == verified.len() + 4,
+        "tuned conversion left staging files"
+    );
+    println!("encoder tuning: file/stdout match with full RGBA equality at threshold 100 despite alpha quality 0");
     Ok(())
 }

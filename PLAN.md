@@ -1,6 +1,6 @@
 # Implementation Plan — webptune
 
-**Status:** Phases 0–8 complete; v0.1.0 tagged after native Linux/macOS/Windows validation; Phase 9 maximum-dimension resizing, exhaustive search, size policies, quiet mode, bounded directory batches and color/orientation/16-bit/HDR preparation implemented · **Target:** v0.1.0 MVP plus Phase 9 follow-up · **Language:** Rust (edition 2021)
+**Status:** Phases 0–8 complete; v0.1.0 tagged after native Linux/macOS/Windows validation; Phase 9 maximum-dimension resizing, exhaustive search, size policies, quiet mode, bounded directory batches, color/orientation/16-bit/HDR preparation and encoder/alpha tuning implemented · **Target:** v0.1.0 MVP plus Phase 9 follow-up · **Language:** Rust (edition 2021)
 
 ## 1. Purpose and scope
 
@@ -13,7 +13,7 @@ The objective is **minimize encoded bytes subject to a measured quality floor**,
 1. Accept common still-image formats (JPEG, PNG, WebP, BMP) and convert to still WebP. Phase 9 adds linear-sRGB Radiance HDR input and color/orientation preparation.
 2. Support `--threshold` as a native SSIMULACRA2 score (default `80`, valid `0..=100`).
 3. Support `--scale` (default `1.0`, valid `0 < scale <= 1.0`) with Lanczos3 resizing. Phase 9 adds maximum width/height bounds as alternatives.
-4. Preserve alpha when present, with alpha-aware quality comparisons.
+4. Preserve alpha by default, with alpha-aware quality comparisons even when lossy alpha is requested.
 5. Search lossy quality configurations in memory, then consider lossless WebP. Phase 9 adds optional exhaustive evaluation of all 101 integer qualities plus lossless.
 6. Select the smallest **tested, feasible** encoded candidate.
 7. Support `-o -` for binary stdout and reliable file output.
@@ -23,7 +23,7 @@ The objective is **minimize encoded bytes subject to a measured quality floor**,
 
 ### Non-goals for v0.1
 
-Animated images, upscaling, metadata/ICC profile preservation, HDR/16-bit output fidelity, arbitrary WebP encoder parameter sweeps, global-optimum guarantees, streaming input, and an image-comparison GUI. Batch/directory processing and color/orientation/high-precision preparation were deferred from the MVP and are implemented after the v0.1.0 tag in sections 26–27. Unsupported cases must be documented or rejected, not quietly mishandled.
+Animated images, upscaling, metadata/ICC profile preservation, HDR/16-bit output fidelity, arbitrary WebP encoder parameter sweeps, global-optimum guarantees, streaming input, and an image-comparison GUI. Batch/directory processing and color/orientation/high-precision preparation were deferred from the MVP and are implemented after the v0.1.0 tag in sections 26–27; fixed encoder/alpha tuning follows in section 28. Unsupported cases must be documented or rejected, not quietly mishandled.
 
 ## 2. Correctness decisions
 
@@ -41,7 +41,7 @@ Test integer lossy qualities `0..=100`: quality 0 and 100 are valid libwebp inpu
 
 ### 2.3 Lossless and alpha handling
 
-Use RGB only for fully opaque images; use RGBA when any pixel has transparency. SSIMULACRA2 can accept RGBA input and evaluates transparency against different backgrounds. Build reference and decoded-candidate pixel views using the *same* dimensions and correctly specified pixel descriptors; score the actual alpha-bearing output, not a silently flattened RGB version.
+Use RGB only for fully opaque images; use RGBA when any pixel has transparency. SSIMULACRA2 can accept RGBA input and evaluates transparency against different backgrounds. Build reference and decoded-candidate pixel views using the *same* dimensions and correctly specified pixel descriptors; score the actual alpha-bearing output, not a silently flattened RGB version. Alpha is exact by default; section 28 adds optional lossy alpha controls without relaxing the measured threshold.
 
 Lossless WebP preserves displayed pixels, but may normalize RGB values hidden under fully transparent pixels. Therefore **do not assert bytewise RGBA identity or automatically assume score 100**. Decode and score the lossless candidate just like every other candidate. For threshold 100, accept only candidates whose measured score satisfies the threshold (allow no undocumented epsilon). If no candidate is feasible, fail clearly and do not create an output. Test this edge case with transparent pixel fixtures.
 
@@ -1215,3 +1215,77 @@ The six release cases independently scored at least 90, retained source/alpha,
 and matched file/stdout and recursive two-worker batch bytes. The existing
 Linux/macOS/Windows matrix runs this expanded coverage; historical results for
 the tagged implementation remain in section 24.
+
+
+## 28. Phase 9 — WebP encoder tuning and alpha quality
+
+The sixth deferred item adds six fixed encoder settings to both single-image
+and batch conversion. All defaults match the original configuration, and no
+packages, native dependencies, toolchain requirements or lockfile entries change.
+
+| Setting | Default | Scope |
+|---|---|---|
+| `--method 0..6` | 4 | Lossy and lossless compression method |
+| `--lossless-effort 0..100` | 75 | Lossless compression effort, without fidelity loss |
+| `--alpha-quality 0..100` | 100 | Lossy alpha; 100 preserves samples exactly |
+| `--alpha-filtering none/fast/best` | fast | Lossy alpha prediction, independent of quantization |
+| `--sharp-yuv` | off | Lossy RGB-to-YUV conversion |
+| `--exact` | off | Preserve hidden RGB in the lossless candidate |
+
+`encoder::EncoderOptions` is public, copyable and validated before metric
+construction. `TrialEvaluator::with_options` stores one validated settings value;
+`new` retains its existing API and defaults. CLI options are flattened into
+`Args::encoder` and cloned with each batch task. Clap rejects noninteger,
+out-of-range, missing and unknown values with exit 2 before opening input or
+writing output. Library callers receive errors for invalid numeric fields too.
+Verbose reports identify the settings once per image; quiet remains silent.
+
+Every trial starts from `WebPConfig::new`, retaining unrelated codec defaults.
+Method applies to both modes. The searched lossy quality still occupies the
+encoder quality field; lossless uses the configured effort there instead.
+Lossy trials use the chosen alpha quality/prediction and sharp-YUV conversion.
+Lossless keeps alpha quality 100 and near-lossless 100, retains the prior
+alpha-compression setting, and applies `exact` only there. Opaque pixels have no
+alpha plane. No encoder-side threading or parameter sweeps are introduced;
+existing batch workers and preparation guards are unchanged. Higher effort can
+increase time and working memory and is not a promise of smaller output.
+
+Alpha quantization is a permission, not an exemption from quality measurement.
+Candidates are decoded and scored with their actual alpha against the unchanged
+processed reference. Lossless remains a measured fallback with full alpha.
+`exact` preserves hidden RGB only when lossless is selected; threshold 100 does
+not independently guarantee those samples because the metric ignores hidden
+RGB. Neither flag forces a mode. Search budgets, tie breaking, size policies and
+output replacement are unchanged. Exhaustive optimality remains restricted to
+101 integer lossy qualities plus lossless at the fixed selected settings.
+
+The controls use the existing pinned `webp` advanced encoder and bundled
+libwebp. Their meanings were checked against the vendored `encode.h` and
+`config_enc.c` and the upstream
+[encoder documentation](https://developers.google.com/speed/webp/docs/cwebp).
+The pinned encoder's sharp conversion applies with every supported method.
+
+Six integration tests in `tests/tuning.rs` cover default byte compatibility
+against the original direct encoder configuration; all seven methods, effort
+endpoints and individual/combined settings against direct libwebp output;
+timed/ordinary byte and score equality; independent decoding and one-shot
+scoring; a synthetic continuous alpha gradient showing actual quantization;
+exact hidden RGB and unchanged alpha with all prediction modes; full-alpha
+lossless fallback at threshold 100 in both searches; invalid CLI/library fields;
+and RGB/RGBA resized file/stdout, byte-cap failure, source preservation and
+parallel batch equality in both searches at thresholds 80 and 100. The gradient
+is generated in memory and requires no external asset or fixture changes.
+
+The release smoke checker retains its six preparation/default-encoder cases and
+two-worker batch comparison, then invokes the built binary through file/stdout
+with all six tuning flags, alpha quality 0, exact mode and threshold 100. Full
+RGBA equality independently proves a true lossless fallback, and it checks
+settings diagnostics, source preservation and cleanup. The native CI workflow
+runs these expanded tests and smoke checks on Linux, macOS and Windows.
+
+Local Linux validation used Rust 1.89.0: `cargo fmt --all -- --check`,
+`cargo clippy --all-targets --locked --offline -- -D warnings`, all 126 tests via
+`cargo test --all-targets --locked --offline`, and a locked/offline release build
+of the CLI and smoke checker passed. The six original smoke cases retained
+their bytes/scores, and the added tuning case passed exact RGBA equality at
+threshold 100 with alpha quality 0 through both file and stdout output.
