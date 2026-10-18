@@ -1,17 +1,39 @@
 use std::fmt::Write as _;
 use std::io::{self, Write as _};
+use std::process::ExitCode;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use clap::Parser;
 use webptune::batch::BatchPlan;
+use webptune::cancel::Cancellation;
 use webptune::cli::{Args, OutputTarget};
 use webptune::encoder::TrialEvaluator;
 use webptune::{input, output, search};
 
-fn main() -> Result<()> {
+fn main() -> ExitCode {
     let args = Args::parse();
+    let cancel = Cancellation::default();
+    let handler = cancel.clone();
+    let result = ctrlc::set_handler(move || handler.cancel())
+        .context("cannot install cancellation handler")
+        .and_then(|()| run(&args, &cancel));
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("Error: {error:#}");
+            if cancel.is_cancelled() {
+                ExitCode::from(130)
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+    }
+}
+
+fn run(args: &Args, cancel: &Cancellation) -> Result<()> {
     if args.batch {
-        let summary = BatchPlan::new(&args)?.execute(convert)?;
+        let summary = BatchPlan::new_with_cancellation(args, cancel)?
+            .execute_with_cancellation(cancel, |task| convert(task, cancel))?;
         for failure in &summary.failures {
             eprintln!("Failed '{}': {:#}", failure.input.display(), failure.error);
         }
@@ -30,16 +52,35 @@ fn main() -> Result<()> {
             );
         }
     } else {
-        convert(&args)?;
+        convert(args, cancel)?;
     }
-    Ok(())
+    cancel.check()
 }
 
-fn convert(args: &Args) -> Result<output::WriteOutcome> {
+fn convert(args: &Args, cancel: &Cancellation) -> Result<output::WriteOutcome> {
+    cancel.check()?;
     args.validate_paths()?;
-    let reference = input::load_with_resize(&args.input, args.resize())?;
-    let evaluator = TrialEvaluator::with_options(reference.pixels(), args.encoder)?;
+    if args.verbose && args.is_stdin() {
+        eprintln!("Reading stdin until EOF (maximum 256 MiB)...");
+    }
+    let stdin = if args.is_stdin() {
+        Some(input::read_stdin(cancel)?)
+    } else {
+        None
+    };
+    let reference = if let Some(stdin) = &stdin {
+        stdin
+            .prepare(args.resize(), cancel)
+            .context("cannot prepare stdin image")?
+    } else {
+        input::load_with_cancellation(&args.input, args.resize(), cancel)?
+    };
+    let evaluator = TrialEvaluator::with_cancellation(reference.pixels(), args.encoder, cancel)?;
+    if args.verbose {
+        eprintln!("Searching WebP candidates...");
+    }
     let result = search::search_with_mode(&evaluator, args.threshold, args.search)?;
+    cancel.check()?;
     let mut report = String::new();
     if args.batch && !args.quiet {
         let OutputTarget::File(destination) = &args.output else {
@@ -63,7 +104,12 @@ fn convert(args: &Args) -> Result<output::WriteOutcome> {
         }
     }
     let selected = result.candidate();
-    let outcome = match output::write(args, selected) {
+    let outcome = match output::write_with_cancellation(
+        args,
+        selected,
+        stdin.as_ref().map(input::SpooledInput::bytes),
+        cancel,
+    ) {
         Ok(outcome) => outcome,
         Err(error) => {
             // Preserve verbose trial diagnostics on an output-policy/write error.

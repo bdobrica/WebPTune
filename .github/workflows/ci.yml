@@ -46,7 +46,7 @@ jobs:
         run: cargo test --all-targets --locked
       - name: Build release binary and smoke checker
         run: cargo build --release --locked --bin webptune --example smoke
-      - name: Verify release output, color preparation, encoder tuning and batches
+      - name: Verify release output, stdin, color preparation, tuning and batches
         run: cargo run --release --locked --example smoke -- target/release/webptune${{ matrix.exe }}
       - name: Check that validation did not modify tracked files
         run: git diff --exit-code

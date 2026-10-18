@@ -49,7 +49,8 @@ source: the shell opens it before the application starts.
 - Perceptual quality target via native SSIMULACRA2 score (`0..100`, default `80`).
 - Optional Lanczos3 downscaling by a multiplier or maximum width/height.
 - Transparency-aware evaluation and exact alpha by default.
-- Binary-safe stdout (`-o -`) for command-line pipelines.
+- Binary-safe stdin (`-i -`) and stdout (`-o -`) for command-line pipelines.
+- Cooperative Ctrl+C cancellation with temporary-file cleanup.
 - In-memory candidate evaluation with lossless comparison.
 - Explicit errors when no candidate can be verified to meet the threshold.
 
@@ -106,7 +107,7 @@ webptune --input INPUT --output OUTPUT [OPTIONS]
 
 | Flag | Meaning | Default |
 |---|---|---|
-| `-i, --input <PATH>` | Input still image, or directory with `--batch` | Required |
+| `-i, --input <PATH\|->` | Input still image, `-` for stdin, or directory with `--batch` | Required |
 | `-o, --output <PATH\|->` | Destination WebP file, `-` for stdout, or existing directory with `--batch` | Required |
 | `--batch` | Convert a directory of supported images to a separate directory | Off |
 | `--recursive` | Include subdirectories and preserve their relative paths; requires `--batch` | Off |
@@ -212,6 +213,52 @@ byte-limit failures take priority over skipping and still exit nonzero.
 stderr and the same exit codes and output bytes. It conflicts with `--verbose`.
 It does not suppress explicit help/version output. JSON reporting remains a
 possible future enhancement.
+
+### Stdin and cancellation
+
+Read a single binary image from stdin with `-i -`. File and stdin input use the
+same preparation, encoder and search options:
+
+```bash
+webptune -i - -o optimized.webp --threshold 90 < photo.png
+cat photo.png | webptune -i - -o - --scale-width 1920 > optimized.webp
+```
+
+On Windows, use byte-preserving `cmd` redirection (including from PowerShell):
+
+```powershell
+cmd /d /c "target\release\webptune.exe -i - -o optimized.webp < photo.png"
+```
+
+Stdin is spooled to a temporary file in the OS temporary directory until EOF,
+with a **256 MiB compressed-input limit** and a bounded 64 KiB reader channel.
+No output is written before EOF and successful preparation/search. Empty,
+malformed, animated and oversized images fail normally. Spools are removed on
+success, failure and cooperative cancellation. A writable temporary directory
+with enough disk space is required; ordinary file input has no new compressed
+size limit. `--skip-if-larger` compares with the actual received byte count;
+`--max-bytes` keeps its existing precedence. Batch mode rejects `-i -` and
+`-o -`. Use `./-` for a file literally named `-`.
+
+Press **Ctrl+C** to cancel; Unix SIGTERM/SIGHUP and Windows console Ctrl+Break
+also request cancellation. Cancellation exits **130**, keeps diagnostics visible
+with `--quiet`, and removes stdin/output staging files before exit. Active batch
+workers stop at checkpoints and are joined; workers stop taking new jobs when
+they observe cancellation. Completed outputs and created output directories
+remain. A replacement already completed is retained.
+
+Checks run around preparation stages, each encode/decode/score operation,
+between trials and output chunks, and immediately before final replacement.
+Cancellation also works while waiting for stdin without EOF. An active codec,
+resize/color transform, metric call or blocked OS I/O can delay cancellation;
+there is no fixed shutdown deadline. Partial stdout cannot be retracted.
+Forced termination, crashes or power loss can leave temporary files. Library
+callers can pass a shared `Cancellation` token; the library installs no signal
+handlers.
+
+Shell redirection opens files before WebPTune starts. Keep redirected output
+separate from its source; stdin has no source path for alias checks. Binary
+stdin carries one still-image stream, not a multi-image batch protocol.
 
 ### Encoder tuning
 
@@ -410,7 +457,8 @@ exit `0`. Invalid arguments exit `2`; path/input errors,
 encoding/decoding failures, unmet thresholds, exceeded byte caps and output errors exit `1` with
 details on stderr. Successful file output leaves stdout empty; successful stdout
 output contains only WebP bytes unless skipped (empty stdout). Quiet mode keeps
-errors visible. Input `-` is unsupported.
+errors visible. Cooperative cancellation exits `130` with a diagnostic and retains
+completed outputs; see [stdin and cancellation](#stdin-and-cancellation).
 
 ## Development
 
@@ -427,7 +475,9 @@ executes the release binary for RGB/RGBA inputs, replaces an existing file,
 compares file/stdout bytes, independently decodes/scores them, and verifies
 scaled dimensions, alpha and source preservation. It also exercises every tuning
 flag with exact RGBA equality at threshold 100 and alpha quality 0, verifying the
-lossless fallback and file/stdout equality.
+lossless fallback and file/stdout equality. Each of the six preparation cases
+also runs through stdin pipes to file/stdout, matching independently verified
+bytes and leaving no stdin spools.
 
 [CI](.github/workflows/ci.yml) runs the commands above on push, pull request and
 manual dispatch on all three target platforms. Each job uses a fresh checkout
@@ -468,7 +518,13 @@ Encoder tuning tests compare defaults with the original configuration and
 nondefault trials with direct libwebp encoding, verify measured alpha loss and
 exact hidden RGB, reject invalid CLI/library options, and check both search
 modes, file/stdout equality, byte caps and two-worker batch results. The suite
-also retains the Phase 0 API tests.
+also retains the Phase 0 API tests. Stdin tests cover both search modes,
+independent decoded quality, supported formats, color/HDR, nondefault tuning,
+EOF, malformed/empty streams, early path validation, byte policies and spool
+bounds/errors. Cancellation tests cover shared tokens, staged cleanup, partial
+writes and stopping batch scheduling. Unix process tests send
+SIGINT/SIGTERM/SIGHUP during blocked stdin and active searches, verifying exit
+130, preservation and cleanup; all platforms run shared-token and stream checks.
 
 The executable matrix crosses 11 fixtures with scales 1/0.5, thresholds
 0/80/90/100, and file/stdout output (176 CLI invocations). Every payload is

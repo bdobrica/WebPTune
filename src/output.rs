@@ -7,6 +7,7 @@ use std::path::Path;
 use anyhow::{ensure, Context, Result};
 use tempfile::NamedTempFile;
 
+use crate::cancel::Cancellation;
 use crate::cli::{Args, OutputTarget};
 use crate::search::Candidate;
 
@@ -34,6 +35,18 @@ pub enum WriteOutcome {
 /// protection against concurrent filesystem manipulation are not guaranteed.
 /// Partial stdout writes cannot be rolled back.
 pub fn write(args: &Args, candidate: &Candidate) -> Result<WriteOutcome> {
+    write_with_cancellation(args, candidate, None, &Cancellation::default())
+}
+
+/// `stdin_bytes` supplies the actual received size for stdin size policies.
+/// Cancellation is checked before staging, in chunks, and just before rename.
+pub fn write_with_cancellation(
+    args: &Args,
+    candidate: &Candidate,
+    stdin_bytes: Option<u64>,
+    cancel: &Cancellation,
+) -> Result<WriteOutcome> {
+    cancel.check()?;
     ensure!(
         !candidate.bytes().is_empty(),
         "WebP candidate contains no bytes"
@@ -55,33 +68,68 @@ pub fn write(args: &Args, candidate: &Candidate) -> Result<WriteOutcome> {
     }
     if args.skip_if_larger {
         args.validate_paths()?;
-        let input_bytes = std::fs::metadata(&args.input)
-            .with_context(|| format!("cannot inspect input size '{}'", args.input.display()))?
-            .len();
+        let input_bytes = if args.is_stdin() {
+            stdin_bytes.context("stdin byte count is required for --skip-if-larger")?
+        } else {
+            std::fs::metadata(&args.input)
+                .with_context(|| format!("cannot inspect input size '{}'", args.input.display()))?
+                .len()
+        };
         if candidate_bytes > input_bytes {
+            cancel.check()?;
             return Ok(WriteOutcome::Skipped { input_bytes });
         }
     }
     match &args.output {
         OutputTarget::Stdout => {
             args.validate_paths()?;
-            write_payload(&mut io::stdout().lock(), candidate.bytes())
+            write_payload_checked(&mut io::stdout().lock(), candidate.bytes(), cancel)
                 .context("cannot write WebP to stdout")?;
         }
         OutputTarget::File(_) => {
-            write_file_with(args, |file| write_payload(file, candidate.bytes()))?;
+            write_file_checked(args, cancel, |file| {
+                write_payload_checked(file, candidate.bytes(), cancel)
+            })?;
         }
     }
     Ok(WriteOutcome::Written)
 }
 
+#[cfg(test)]
 fn write_payload(writer: &mut impl Write, bytes: &[u8]) -> io::Result<()> {
-    writer.write_all(bytes)?;
-    // stdout may buffer small payloads; report deferred write failures too.
+    write_payload_checked(writer, bytes, &Cancellation::default())
+}
+
+fn write_payload_checked(
+    writer: &mut impl Write,
+    mut bytes: &[u8],
+    cancel: &Cancellation,
+) -> io::Result<()> {
+    while !bytes.is_empty() {
+        cancel.check_io()?;
+        let count = match writer.write(&bytes[..bytes.len().min(64 * 1024)]) {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(count) => count,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+        bytes = &bytes[count..];
+    }
+    cancel.check_io()?;
     writer.flush()
 }
 
+#[cfg(test)]
 fn write_file_with(args: &Args, stage: impl FnOnce(&mut File) -> io::Result<()>) -> Result<()> {
+    write_file_checked(args, &Cancellation::default(), stage)
+}
+
+fn write_file_checked(
+    args: &Args,
+    cancel: &Cancellation,
+    stage: impl FnOnce(&mut File) -> io::Result<()>,
+) -> Result<()> {
+    cancel.check()?;
     args.validate_paths()?;
     let OutputTarget::File(destination) = &args.output else {
         anyhow::bail!("file output requires a destination path");
@@ -98,6 +146,7 @@ fn write_file_with(args: &Args, stage: impl FnOnce(&mut File) -> io::Result<()>)
             destination.display()
         )
     })?;
+    cancel.check()?;
     temporary.as_file().sync_all().with_context(|| {
         format!(
             "cannot sync temporary output for '{}'",
@@ -107,6 +156,7 @@ fn write_file_with(args: &Args, stage: impl FnOnce(&mut File) -> io::Result<()>)
     // Search and staging can take time: repeat collision checks immediately
     // before replacement. Never open/truncate the final destination for writing.
     args.validate_paths()?;
+    cancel.check()?;
     temporary
         .persist(destination)
         // PersistError owns the temporary file. Extract the I/O error and drop
@@ -121,6 +171,50 @@ mod tests {
     use super::*;
     use crate::encoder::Mode;
     use tempfile::{tempdir, TempDir};
+
+    #[test]
+    fn cancellation_after_staging_preserves_destination_and_removes_temporary() {
+        let (directory, args) = fixture();
+        let OutputTarget::File(destination) = &args.output else {
+            unreachable!()
+        };
+        std::fs::write(destination, b"old destination").unwrap();
+        let cancel = Cancellation::default();
+        let result = write_file_checked(&args, &cancel, |file| {
+            file.write_all(b"staged bytes")?;
+            cancel.cancel();
+            Ok(())
+        });
+        assert!(result.unwrap_err().is::<crate::cancel::Cancelled>());
+        assert_eq!(std::fs::read(destination).unwrap(), b"old destination");
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn cancellation_stops_partial_payload_and_prevents_flush() {
+        struct Writer {
+            cancel: Cancellation,
+            bytes: Vec<u8>,
+        }
+        impl Write for Writer {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                let n = bytes.len().min(2);
+                self.bytes.extend_from_slice(&bytes[..n]);
+                self.cancel.cancel();
+                Ok(n)
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                panic!("must stop before flush");
+            }
+        }
+        let cancel = Cancellation::default();
+        let mut writer = Writer {
+            cancel: cancel.clone(),
+            bytes: Vec::new(),
+        };
+        assert!(write_payload_checked(&mut writer, b"payload", &cancel).is_err());
+        assert_eq!(writer.bytes, b"pa");
+    }
 
     fn fixture() -> (TempDir, Args) {
         let directory = tempdir().unwrap();

@@ -10,6 +10,7 @@ use std::thread;
 
 use anyhow::{bail, ensure, Context, Result};
 
+use crate::cancel::Cancellation;
 use crate::cli::{Args, OutputTarget};
 use crate::output::WriteOutcome;
 
@@ -41,6 +42,12 @@ impl BatchPlan {
     /// must exist and have disjoint canonical trees. Generated subdirectories
     /// may be absent; existing output symlinks are refused in batch mode.
     pub fn new(args: &Args) -> Result<Self> {
+        Self::new_with_cancellation(args, &Cancellation::default())
+    }
+
+    pub fn new_with_cancellation(args: &Args, cancel: &Cancellation) -> Result<Self> {
+        cancel.check()?;
+        ensure!(!args.is_stdin(), "stdin input cannot be used with --batch");
         ensure!(args.batch, "directory processing requires --batch");
         let workers = args.jobs.unwrap_or(1);
         ensure!(
@@ -75,6 +82,7 @@ impl BatchPlan {
             for entry in fs::read_dir(&directory)
                 .with_context(|| format!("cannot list input directory '{}'", directory.display()))?
             {
+                cancel.check()?;
                 let entry = entry.context("cannot read batch directory entry")?;
                 let kind = entry.file_type().with_context(|| {
                     format!("cannot inspect input '{}'", entry.path().display())
@@ -97,6 +105,7 @@ impl BatchPlan {
         // match with actual handle equality; hash collisions cannot reject a file.
         let mut identities: HashMap<u64, Vec<&Path>> = HashMap::new();
         for source in &sources {
+            cancel.check()?;
             identities
                 .entry(identity_hash(source)?)
                 .or_default()
@@ -106,6 +115,7 @@ impl BatchPlan {
         let mut parents = HashSet::new();
         let mut tasks = Vec::with_capacity(sources.len());
         for source in &sources {
+            cancel.check()?;
             let relative = source.strip_prefix(&input_root)?.with_extension("webp");
             let key = portable_key(&relative);
             ensure!(
@@ -166,6 +176,19 @@ impl BatchPlan {
     where
         F: Fn(&Args) -> Result<WriteOutcome> + Sync,
     {
+        self.execute_with_cancellation(&Cancellation::default(), convert)
+    }
+
+    /// Stop scheduling on cancellation, join active workers, and retain completed files.
+    pub fn execute_with_cancellation<F>(
+        &self,
+        cancel: &Cancellation,
+        convert: F,
+    ) -> Result<BatchSummary>
+    where
+        F: Fn(&Args) -> Result<WriteOutcome> + Sync,
+    {
+        cancel.check()?;
         let next = AtomicUsize::new(0);
         let results = thread::scope(|scope| {
             let mut workers = Vec::new();
@@ -176,10 +199,16 @@ impl BatchPlan {
                     .spawn_scoped(scope, move || {
                         let mut results = Vec::new();
                         loop {
+                            if cancel.is_cancelled() {
+                                break;
+                            }
                             let index = next.fetch_add(1, Ordering::Relaxed);
                             let Some(task) = self.tasks.get(index) else {
                                 break;
                             };
+                            if cancel.is_cancelled() {
+                                break;
+                            }
                             let result = self.prepare_parent(task).and_then(|()| convert(task));
                             results.push((index, result));
                         }
@@ -206,6 +235,7 @@ impl BatchPlan {
         })?;
         let mut results = results;
         results.sort_by_key(|(index, _)| *index);
+        cancel.check()?;
         let mut summary = BatchSummary::default();
         for (index, result) in results {
             match result {

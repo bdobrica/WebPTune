@@ -3,12 +3,15 @@
 Review date: 2026-10-18. Versions below come from `Cargo.lock` and the resolved
 Cargo feature graph. No dependency versions changed during Phase 8. Phase 9
 color preparation promotes existing transitive moxcms and development png to
-runtime dependencies and enables image's HDR codec; locked versions stay fixed.
+runtime dependencies and enables image's HDR codec; those locked versions stay fixed.
+Phase 9 cancellation adds ctrlc and its platform bindings without upgrading any
+previously locked package.
 
 | Direct dependency | Locked version | Purpose / enabled scope | Declared license |
 |---|---|---|---|
 | anyhow | 1.0.104 | Contextual errors | MIT OR Apache-2.0 |
 | clap | 4.5.61 | CLI, derive; constrained to the 4.5 series | MIT OR Apache-2.0 |
+| ctrlc | 3.5.2 | Ctrl+C and Unix SIGTERM/SIGHUP; `termination` feature | MIT OR Apache-2.0 |
 | fast-ssim2 | 0.9.0 | Cached RGB/RGBA SSIMULACRA2; empty default feature set | BSD-2-Clause |
 | image | 0.25.10 | JPEG, PNG, WebP, BMP and Radiance HDR; defaults disabled | MIT OR Apache-2.0 |
 | moxcms | 0.8.1 | Pure-Rust ICC transforms and standard profile definitions | BSD-3-Clause OR Apache-2.0 |
@@ -33,6 +36,21 @@ or system dependency. Float transforms have finite LUT precision (documented
 by moxcms as approximately 14-bit), so high-precision preparation does not imply
 lossless 16-bit or HDR output. The source-color policy and parser limits are in
 [README](README.md#color-orientation-and-hdr) and [PLAN section 27](PLAN.md#27-phase-9--color-orientation-and-high-precision-preparation).
+
+## Cancellation bindings
+
+[ctrlc 3.5.2](https://docs.rs/ctrlc/3.5.2/ctrlc/) handles native console/signals
+through a dedicated thread. The CLI installs it once; the library's shared atomic
+token installs no global handler. `termination` adds Unix SIGTERM/SIGHUP handling.
+
+New transitive packages are nix 0.31.3 (MIT, Rust 1.69), cfg_aliases 0.2.2
+(MIT, build helper), dispatch2 0.3.1 (MIT OR Apache-2.0 OR Zlib, Rust 1.71),
+block2 0.6.2 (MIT, Rust 1.71), objc2 0.6.5 and objc2-encode 4.1.0 (MIT,
+Rust 1.71). Apple uses system Grand Central Dispatch. Windows enables console,
+security and threading bindings in the existing windows-sys 0.61.2 package.
+ctrlc declares Rust 1.69. No existing package version changes or extra native
+installation is required on supported hosts. Include these packages' notices
+in any future binary distribution.
 
 ## Native codec
 

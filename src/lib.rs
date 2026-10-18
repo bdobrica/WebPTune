@@ -3,6 +3,7 @@
 //! Guarded image preparation, measured WebP selection and safe output writing.
 
 pub mod batch;
+pub mod cancel;
 pub mod cli;
 mod color;
 pub mod encoder;

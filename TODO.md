@@ -279,7 +279,7 @@ checkout. See [PLAN.md, section 25](PLAN.md#25-v010-release-tag).
 - [x] Add batch/directory mode with bounded parallelism.
 - [x] Add color profile support, EXIF orientation and 16-bit/HDR pathway.
 - [x] Add richer WebP encoder tuning options and alpha-quality controls.
-- [ ] Add stdin input and interrupted-operation cancellation.
+- [x] Add stdin input and interrupted-operation cancellation.
 
 Maximum-dimension resizing accepts either or both positive integer bounds,
 never upscales, rounds to whole pixels (minimum one per axis), and rejects
@@ -388,6 +388,28 @@ modes, file/stdout equality, byte caps, source preservation and parallel batches
 Release smoke additionally checks all tuning flags with exact RGBA equality at
 threshold 100 despite alpha quality 0. Native CI runs the expanded checks on
 Linux, macOS and Windows.
+
+Stdin input is available through `-i -` in single-image mode. The received stream
+is spooled through EOF to an automatically cleaned temporary file, with a
+256 MiB compressed limit and a bounded reader channel. Preparation and output
+are byte-identical to file input with the same options. Size-based skipping uses
+the received byte count. Batch stdin is rejected; `./-` remains a literal path.
+Ctrl+C and Unix SIGTERM/SIGHUP request cooperative cancellation, return exit 130,
+clean spools/staging files and stop further batch scheduling. Completed outputs
+remain. Active codec/metric/transform calls or blocked I/O can delay shutdown;
+partial stdout and already completed replacements cannot be rolled back. See
+[PLAN.md, section 29](PLAN.md#29-phase-9--stdin-input-and-cooperative-cancellation).
+
+Local Linux validation (Rust 1.89.0): formatting, Clippy with denied warnings,
+all 137 tests, locked/offline release build and expanded release smoke passed.
+New tests cover stdin/file equality and independent scores across both search
+modes, all formats, color/HDR and tuning, EOF, byte policies, malformed streams,
+spool limits/errors, cancellation after staging/partial writes and stopped batch
+jobs. Native Unix signal tests cover blocked stdin and active searches with
+preservation, cleanup and exit 130. Release smoke pipes all six preparation cases
+to file/stdout and checks bytes, quiet behavior and spool cleanup. Native CI runs
+the shared-token/stream checks on all three hosts; actual Windows console event
+delivery is not covered by the Unix process tests. All Phase 9 items are complete.
 
 ## Release acceptance checklist
 

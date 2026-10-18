@@ -169,6 +169,7 @@ impl Trial {
 /// Each call returns one measured trial. Callers can discard inferior bytes
 /// instead of retaining all trial buffers. This layer never reads/writes files.
 pub struct TrialEvaluator<'a> {
+    cancel: crate::cancel::Cancellation,
     pixels: &'a Pixels,
     metric: MetricReference,
     options: EncoderOptions,
@@ -184,10 +185,23 @@ impl<'a> TrialEvaluator<'a> {
     /// includes alpha. Lossless remains exact apart from hidden RGB unless exact
     /// preservation is requested.
     pub fn with_options(pixels: &'a Pixels, options: EncoderOptions) -> Result<Self> {
+        Self::with_cancellation(pixels, options, &crate::cancel::Cancellation::default())
+    }
+
+    /// Use a shared cooperative token; no signal handler is installed here.
+    pub fn with_cancellation(
+        pixels: &'a Pixels,
+        options: EncoderOptions,
+        cancel: &crate::cancel::Cancellation,
+    ) -> Result<Self> {
+        cancel.check()?;
         options.validate()?;
+        let metric = MetricReference::new(pixels)?;
+        cancel.check()?;
         Ok(Self {
+            cancel: cancel.clone(),
             pixels,
-            metric: MetricReference::new(pixels)?,
+            metric,
             options,
         })
     }
@@ -203,6 +217,7 @@ impl<'a> TrialEvaluator<'a> {
     }
 
     fn evaluate_inner<const TIMED: bool>(&self, mode: Mode) -> Result<(Trial, EvaluationTimings)> {
+        self.cancel.check()?;
         let start = TIMED.then(Instant::now);
         let config = self.options.config(mode)?;
         let (width, height) = self.pixels.dimensions();
@@ -218,18 +233,21 @@ impl<'a> TrialEvaluator<'a> {
             .encode_advanced(&config)
             .map_err(|error| anyhow!("WebP encoding failed for {mode:?}: {error:?}"))?;
         let encode = start.map_or(Duration::ZERO, |start| start.elapsed());
+        self.cancel.check()?;
         let start = TIMED.then(Instant::now);
         // Decode and score even lossless. Hidden RGB may change at alpha=0.
         let decoded = self
             .decode_webp(&encoded)
             .with_context(|| format!("cannot evaluate {mode:?} trial"))?;
         let decode = start.map_or(Duration::ZERO, |start| start.elapsed());
+        self.cancel.check()?;
         let start = TIMED.then(Instant::now);
         let score = self
             .metric
             .score(&decoded)
             .with_context(|| format!("cannot evaluate {mode:?} trial"))?;
         let metric = start.map_or(Duration::ZERO, |start| start.elapsed());
+        self.cancel.check()?;
         drop(decoded);
         Ok((
             Trial {

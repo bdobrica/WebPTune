@@ -57,6 +57,13 @@ larger threshold/input/scale/failure matrix.
 The smoke checker also enables all encoder tuning controls and verifies file/stdout
 byte equality and exact RGBA pixels at threshold 100 despite alpha quality 0.
 This checks that lossless remains a full-alpha fallback with nondefault settings.
+It also pipes the six preparation fixtures through `-i -` to file/stdout, requires
+equality with independently scored file-input output, checks quiet behavior and
+verifies stdin spool cleanup. Integration tests cover EOF/byte policies,
+malformed streams and cancellation. Unix jobs send SIGINT/SIGTERM/SIGHUP during
+blocked stdin and active searches; all hosts exercise shared-token cancellation,
+staged cleanup and stopped batch scheduling. Actual Windows console event
+delivery remains outside these process tests.
 
 For a clean build, clone the intended commit into a fresh directory with no
 `target` directory, enter it, and run the commands above. Cargo may reuse its

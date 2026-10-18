@@ -1,8 +1,9 @@
 //! Validate a built CLI, including its actual file/stdout bytes, on each CI OS.
 
 use std::fs;
+use std::io::Write;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 use anyhow::{ensure, Context, Result};
 use fast_ssim2::{compute_ssimulacra2, PixelDescriptor, PixelSlice};
@@ -243,5 +244,50 @@ fn main() -> Result<()> {
         "tuned conversion left staging files"
     );
     println!("encoder tuning: file/stdout match with full RGBA equality at threshold 100 despite alpha quality 0");
+    let stdin_scratch = tempdir()?;
+    let stdin_destination = directory.path().join("stdin.webp");
+    for (name, original, expected) in &verified {
+        for target in [stdin_destination.as_path(), Path::new("-")] {
+            let mut child = Command::new(&binary)
+                .args(["-i", "-", "-o"])
+                .arg(target)
+                .args(["--threshold", "90", "--scale", "0.5", "--quiet"])
+                .env("TMPDIR", stdin_scratch.path())
+                .env("TMP", stdin_scratch.path())
+                .env("TEMP", stdin_scratch.path())
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()?;
+            child
+                .stdin
+                .take()
+                .context("missing stdin pipe")?
+                .write_all(original)?;
+            let result = child.wait_with_output()?;
+            successful(&result)?;
+            ensure!(result.stderr.is_empty(), "quiet stdin leaked diagnostics");
+            if target == Path::new("-") {
+                ensure!(
+                    result.stdout == *expected,
+                    "stdin/stdout mismatch for {name}"
+                );
+            } else {
+                ensure!(
+                    result.stdout.is_empty() && fs::read(target)? == *expected,
+                    "stdin/file mismatch for {name}"
+                );
+            }
+            ensure!(
+                fs::read_dir(stdin_scratch.path())?.count() == 0,
+                "stdin spool leaked"
+            );
+        }
+    }
+    ensure!(
+        fs::read_dir(directory.path())?.count() == verified.len() + 5,
+        "stdin output left staging files"
+    );
+    println!("stdin: all six preparation cases match independently verified file/stdout output; spools cleaned");
     Ok(())
 }

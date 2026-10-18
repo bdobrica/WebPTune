@@ -281,7 +281,7 @@ fn symlink_aliases_and_dangling_symlinks_are_rejected() {
 }
 
 #[test]
-fn missing_input_directory_input_and_stdin_are_rejected() {
+fn missing_input_directory_input_and_empty_stdin_are_rejected() {
     let fixture = Fixture::new();
     for (input, diagnostic) in [
         (
@@ -289,7 +289,7 @@ fn missing_input_directory_input_and_stdin_are_rejected() {
             "cannot inspect input",
         ),
         (fixture.dir.path().to_path_buf(), "must be a regular file"),
-        (PathBuf::from("-"), "stdin input is not supported"),
+        (PathBuf::from("-"), "stdin is empty"),
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_webptune"))
             .arg("-i")

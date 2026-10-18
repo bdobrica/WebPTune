@@ -78,11 +78,11 @@ fn parse_jobs(value: &str) -> std::result::Result<usize, String> {
 #[derive(Clone, Debug, Parser)]
 #[command(
     version,
-    after_help = "Examples:\n  webptune -i photo.png -o photo.webp -t 90 -s 0.5\n  webptune -i photo.png -o photo.webp --scale-width 1920 --scale-height 1080\n  webptune -i photo.png -o photo.webp --search exhaustive -t 90\n  webptune -i photo.png -o photo.webp --max-bytes 100000 --skip-if-larger --quiet\n  webptune --batch -i photos -o optimized --recursive --jobs 2\n  webptune -i photo.png -o - > photo.webp\n\nInput JPEG/PNG/WebP EXIF orientation is applied before bounds and resizing. Supported RGB/grayscale ICC and PNG color descriptions are converted to sRGB. Sixteen-bit sources keep float precision until final 8-bit quantization. Linear-sRGB Radiance HDR (.hdr) uses a fixed Reinhard tone map to SDR. The score compares this processed SDR reference; it does not measure source HDR/gamut/precision loss. PQ/HLG descriptions are rejected.\n\nDimension bounds preserve aspect ratio (rounded to whole pixels) without cropping, stretching or upscaling. Use either bound or both, as an alternative to --scale.\n\nExhaustive search evaluates all integer lossy qualities 0 through 100 plus lossless. It guarantees the smallest feasible result only within this fixed set at the current encoder settings, and takes more work than the default heuristic.\n\nEncoder tuning stays fixed throughout search. --method (0..=6) controls compression effort in both modes; --lossless-effort (0..=100) controls the lossless candidate. --alpha-quality (0..=100) and --alpha-filtering (none/fast/best) affect lossy alpha only; 100 keeps alpha exact. Reduced alpha quality is still measured by the decoded score. --sharp-yuv affects lossy color conversion; --exact preserves hidden RGB in the lossless candidate. Lossless keeps full alpha and remains a measured fallback. These options also apply to each batch image; exhaustive search does not sweep encoder settings.\n\n--max-bytes accepts a positive integer byte count and never relaxes the quality threshold. If no tested feasible result fits, it fails before writing. --skip-if-larger skips only results strictly larger than the source file, exits successfully and leaves the destination untouched (stdout is empty). Equal sizes are written. A failing byte cap takes priority over skipping. Quiet and verbose conflict; quiet keeps errors visible.\n\nBatch mode requires separate, existing input/output directories and supports .jpg/.jpeg/.png/.webp/.bmp/.hdr files (case insensitive). --recursive includes subdirectories and preserves relative paths, replacing extensions with .webp. Symlink entries and other extensions are skipped. Conflicting output names and overlapping directory trees fail before writing. --jobs (1..=64, default 1) bounds concurrent image pipelines; memory use grows with jobs. Each image uses the same quality/resize/size options. Processing continues after image errors; any failure exits 1 and retains successful outputs. Batch stdout output is unsupported.\n\nExisting destination files are replaced only after the complete WebP is ready. The input file cannot be the destination. Reports go to stderr; '-o -' writes only WebP bytes to stdout. Shell redirection may truncate its target even when output is skipped."
+    after_help = "Examples:\n  webptune -i photo.png -o photo.webp -t 90 -s 0.5\n  webptune -i photo.png -o photo.webp --scale-width 1920 --scale-height 1080\n  webptune -i photo.png -o photo.webp --search exhaustive -t 90\n  webptune -i photo.png -o photo.webp --max-bytes 100000 --skip-if-larger --quiet\n  webptune --batch -i photos -o optimized --recursive --jobs 2\n  webptune -i photo.png -o - > photo.webp\n\nInput JPEG/PNG/WebP EXIF orientation is applied before bounds and resizing. Supported RGB/grayscale ICC and PNG color descriptions are converted to sRGB. Sixteen-bit sources keep float precision until final 8-bit quantization. Linear-sRGB Radiance HDR (.hdr) uses a fixed Reinhard tone map to SDR. The score compares this processed SDR reference; it does not measure source HDR/gamut/precision loss. PQ/HLG descriptions are rejected.\n\nDimension bounds preserve aspect ratio (rounded to whole pixels) without cropping, stretching or upscaling. Use either bound or both, as an alternative to --scale.\n\nExhaustive search evaluates all integer lossy qualities 0 through 100 plus lossless. It guarantees the smallest feasible result only within this fixed set at the current encoder settings, and takes more work than the default heuristic.\n\nEncoder tuning stays fixed throughout search. --method (0..=6) controls compression effort in both modes; --lossless-effort (0..=100) controls the lossless candidate. --alpha-quality (0..=100) and --alpha-filtering (none/fast/best) affect lossy alpha only; 100 keeps alpha exact. Reduced alpha quality is still measured by the decoded score. --sharp-yuv affects lossy color conversion; --exact preserves hidden RGB in the lossless candidate. Lossless keeps full alpha and remains a measured fallback. These options also apply to each batch image; exhaustive search does not sweep encoder settings.\n\n--max-bytes accepts a positive integer byte count and never relaxes the quality threshold. If no tested feasible result fits, it fails before writing. --skip-if-larger skips only results strictly larger than the source file, exits successfully and leaves the destination untouched (stdout is empty). Equal sizes are written. A failing byte cap takes priority over skipping. Quiet and verbose conflict; quiet keeps errors visible.\n\nBatch mode requires separate, existing input/output directories and supports .jpg/.jpeg/.png/.webp/.bmp/.hdr files (case insensitive). --recursive includes subdirectories and preserves relative paths, replacing extensions with .webp. Symlink entries and other extensions are skipped. Conflicting output names and overlapping directory trees fail before writing. --jobs (1..=64, default 1) bounds concurrent image pipelines; memory use grows with jobs. Each image uses the same quality/resize/size options. Processing continues after image errors; any failure exits 1 and retains successful outputs. Batch stdout output is unsupported.\n\nUse '-i -' for binary stdin (one image, up to 256 MiB, spooled to a temporary file until EOF). --skip-if-larger compares the received byte count. Batch stdin is unsupported; use './-' for a file named '-'. Ctrl+C cancels cooperatively between operations, stops new batch jobs and cleans temporary files; completed outputs remain. Unix SIGTERM/SIGHUP also cancel. Cancellation exits 130; a running codec/metric or blocked output write can delay it. Partial stdout cannot be rolled back.\n\nExisting destination files are replaced only after the complete WebP is ready. The input file cannot be the destination. Reports go to stderr; '-o -' writes only WebP bytes to stdout. Shell redirection may truncate its target even when output is skipped."
 )]
 pub struct Args {
-    /// Source still image, or source directory with --batch; stdin is not supported
-    #[arg(short, long, value_name = "PATH")]
+    /// Source still image, '-' for stdin, or source directory with --batch
+    #[arg(short, long, value_name = "PATH|-")]
     pub input: PathBuf,
 
     /// Destination WebP path, '-' for stdout, or existing directory with --batch
@@ -154,26 +154,37 @@ impl Args {
         }
     }
 
+    /// Only a literal dash selects stdin; `./-` remains a file path.
+    pub fn is_stdin(&self) -> bool {
+        self.input.as_os_str() == OsStr::new("-")
+    }
+
     /// Check input readability and reject source/destination aliases without writing.
     ///
     /// Canonical paths catch relative and symlink aliases; file handles also catch
     /// hard links on supported platforms. Recheck before writing in the output
     /// stage: these checks cannot prevent concurrent filesystem changes.
     pub fn validate_paths(&self) -> Result<()> {
-        ensure!(self.input.as_os_str() != OsStr::new("-"), "stdin input is not supported; pass --input a file path (use './-' for a file named '-')");
-        let input_metadata = fs::metadata(&self.input)
-            .with_context(|| format!("cannot inspect input '{}'", self.input.display()))?;
-        ensure!(
-            input_metadata.is_file(),
-            "input '{}' must be a regular file",
-            self.input.display()
-        );
-        let input = File::open(&self.input)
-            .with_context(|| format!("cannot read input '{}'", self.input.display()))?;
-        let input_path = self
-            .input
-            .canonicalize()
-            .with_context(|| format!("cannot resolve input '{}'", self.input.display()))?;
+        let (input, input_path) = if self.is_stdin() {
+            ensure!(!self.batch, "stdin input cannot be used with --batch");
+            (None, None)
+        } else {
+            let input_metadata = fs::metadata(&self.input)
+                .with_context(|| format!("cannot inspect input '{}'", self.input.display()))?;
+            ensure!(
+                input_metadata.is_file(),
+                "input '{}' must be a regular file",
+                self.input.display()
+            );
+            let input = File::open(&self.input)
+                .with_context(|| format!("cannot read input '{}'", self.input.display()))?;
+            let input_path = self
+                .input
+                .canonicalize()
+                .with_context(|| format!("cannot resolve input '{}'", self.input.display()))?;
+
+            (Some(input), Some(input_path))
+        };
 
         let OutputTarget::File(output) = &self.output else {
             return Ok(());
@@ -209,7 +220,7 @@ impl Args {
         let output_path = output
             .canonicalize()
             .with_context(|| format!("cannot resolve output '{}'", output.display()))?;
-        if input_path == output_path {
+        if input_path.as_ref() == Some(&output_path) {
             bail!("output '{}' refers to the input file; choose a different destination or '-' for stdout", output.display());
         }
         ensure!(
@@ -225,6 +236,9 @@ impl Args {
             output.display()
         );
 
+        let Some(input) = input else {
+            return Ok(());
+        };
         let input_handle = same_file::Handle::from_file(input)
             .context("cannot identify input file for collision validation")?;
         let output_handle = same_file::Handle::from_path(output).with_context(|| {

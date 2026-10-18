@@ -13,6 +13,7 @@ publish = false
 [dependencies]
 anyhow = "1"
 clap = { version = "~4.5", features = ["derive"] }
+ctrlc = { version = "3.5", features = ["termination"] }
 fast-ssim2 = "0.9"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp", "hdr"] }
 moxcms = "0.8.1"

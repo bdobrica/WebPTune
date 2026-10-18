@@ -1,6 +1,6 @@
 # Implementation Plan — webptune
 
-**Status:** Phases 0–8 complete; v0.1.0 tagged after native Linux/macOS/Windows validation; Phase 9 maximum-dimension resizing, exhaustive search, size policies, quiet mode, bounded directory batches, color/orientation/16-bit/HDR preparation and encoder/alpha tuning implemented · **Target:** v0.1.0 MVP plus Phase 9 follow-up · **Language:** Rust (edition 2021)
+**Status:** Phases 0–8 complete; v0.1.0 tagged after native Linux/macOS/Windows validation; Phase 9 maximum-dimension resizing, exhaustive search, size policies, quiet mode, bounded directory batches, color/orientation/16-bit/HDR preparation, encoder/alpha tuning, stdin and cooperative cancellation implemented (all Phase 9 items complete) · **Target:** v0.1.0 MVP plus Phase 9 follow-up · **Language:** Rust (edition 2021)
 
 ## 1. Purpose and scope
 
@@ -23,7 +23,7 @@ The objective is **minimize encoded bytes subject to a measured quality floor**,
 
 ### Non-goals for v0.1
 
-Animated images, upscaling, metadata/ICC profile preservation, HDR/16-bit output fidelity, arbitrary WebP encoder parameter sweeps, global-optimum guarantees, streaming input, and an image-comparison GUI. Batch/directory processing and color/orientation/high-precision preparation were deferred from the MVP and are implemented after the v0.1.0 tag in sections 26–27; fixed encoder/alpha tuning follows in section 28. Unsupported cases must be documented or rejected, not quietly mishandled.
+Animated images, upscaling, metadata/ICC profile preservation, HDR/16-bit output fidelity, arbitrary WebP encoder parameter sweeps, global-optimum guarantees, streaming input, and an image-comparison GUI. Batch/directory processing and color/orientation/high-precision preparation were deferred from the MVP and are implemented after the v0.1.0 tag in sections 26–27; fixed encoder/alpha tuning follows in section 28 and spooled stdin/cooperative cancellation in section 29. Unsupported cases must be documented or rejected, not quietly mishandled.
 
 ## 2. Correctness decisions
 
@@ -315,10 +315,10 @@ Measure total wall time, peak RSS, number of trial encodes, encoding time, decod
 ## 10. Post-v0.1 roadmap (optional)
 
 1. `--search heuristic|exhaustive` is implemented (section 22), with a minimum across the *fixed discrete candidate set* for exhaustive search. Additional intermediate search strategies remain optional future work.
-2. `--max-bytes`, `--skip-if-larger` and quiet reports are implemented (section 23). JSON reports and stdin input remain optional future work.
+2. `--max-bytes`, `--skip-if-larger` and quiet reports are implemented (section 23). JSON reports remain optional future work; stdin and cancellation are implemented in section 29.
 3. Directory batches with bounded workers are implemented (section 26). Per-image memory guards remain in force; a total batch memory cap remains future work.
 4. Color-managed/16-bit preparation, EXIF orientation and a Radiance HDR-to-SDR path are implemented (section 27). Metadata copying, HDR output, PQ/HLG and other HDR formats remain outside this path.
-5. Advanced WebP parameters and alpha-quality tuning; support animation as a separate workflow.
+5. Fixed encoder/alpha tuning is implemented (section 28); stdin and cancellation follow in section 29. Animation remains a separate future workflow.
 6. Standalone performance benchmark dataset and published platform-specific binaries.
 
 ## 11. References
@@ -417,7 +417,8 @@ are rejected; a missing destination requires an existing parent directory. No
 output or parent is created or truncated. Existing output identity must be
 readable for the conservative collision check. Filesystem changes after this
 check remain possible; Phase 5 revalidates and uses staged replacement.
-Literal stdin input `-` is rejected (use `./-` for a file named `-`).
+Phase 1 rejected literal stdin input `-`; section 29 adds spooled stdin support.
+Use `./-` for a file named `-`.
 
 `src/limits.rs` establishes reusable, allocation-free checks:
 
@@ -1289,3 +1290,101 @@ Local Linux validation used Rust 1.89.0: `cargo fmt --all -- --check`,
 of the CLI and smoke checker passed. The six original smoke cases retained
 their bytes/scores, and the added tuning case passed exact RGBA equality at
 threshold 100 with alpha quality 0 through both file and stdout output.
+
+
+## 29. Phase 9 — Stdin input and cooperative cancellation
+
+The seventh and final item adds `-i -` for one binary still image and cancellation
+in single-image and directory modes. `Args.input` remains a `PathBuf`;
+`Args::is_stdin()` recognizes only a literal dash. `./-` remains a path. Existing
+file callers and library entry points stay compatible.
+
+### Input policy
+
+Destination validation precedes reading stdin. Batch stdin is rejected before
+discovery. A reader thread sends at most one queued 64 KiB chunk while the
+foreground polls every 25 ms and writes a `webptune-stdin-` named temporary file
+in the OS temporary directory. The compressed stream has an inclusive 256 MiB
+limit, independently of existing decoded pixel/memory limits. The spool is never
+accumulated in an unbounded memory buffer. Read, limit and temporary-file errors
+abort and drop the spool. EOF is required before decoding, searching or writing;
+an empty stream fails explicitly. Trailing data follows the existing decoder
+policy; this does not add a multi-image protocol or stricter container validation.
+
+`SpooledInput` owns the file and received byte count. It feeds the same seekable
+format detection, animation/header/metadata checks, EXIF/color/HDR preparation,
+limits, resize and scoring path. `--skip-if-larger` uses received compressed
+length; the inclusive `--max-bytes` cap still takes priority. No source identity
+is inferred from stdin. File input retains its alias checks and has no new
+compressed-size limit. Shell redirection can truncate a target before startup.
+
+### Cooperative cancellation
+
+A clonable `Cancellation` owns a shared atomic flag; `Cancelled` is a typed error.
+The CLI installs ctrlc's handler once after parsing. Its callback only sets the
+token. Ctrl+C, console Ctrl+Break and Unix SIGINT/SIGTERM/SIGHUP request
+cancellation. Exit codes are 130 for cancellation, 1 for ordinary runtime errors,
+2 for argument errors, and 0 for success/skip/help/version. Quiet retains errors.
+Library code installs no handlers. Callers opt into
+`input::load_with_cancellation`, `TrialEvaluator::with_cancellation`,
+`output::write_with_cancellation`, and the batch constructor/executor variants.
+Existing convenience entry points use uncancelled tokens. The new output entry
+point additionally accepts the received size for stdin skip policy.
+
+Checks bracket input reads/seeks, preparation stages and metric construction,
+encode/decode/score operations, trial boundaries, 64 KiB output writes, sync
+and final replacement. Staging uses RAII cleanup, including cancellation after
+all bytes have been staged. No partial search winner is written after a noticed
+cancellation. Stdout may already contain bytes. The pre-rename check cannot
+eliminate a signal arriving during rename; completed replacements stay completed.
+
+Batch discovery/preflight check cancellation, workers stop claiming tasks when
+they observe the flag, and the coordinator joins active workers before returning
+cancellation. The CLI callback shares the same token. Completed files and created
+directories remain. Ordinary per-image errors still permit other jobs. Library
+callbacks must also observe the token to stop their own in-flight work.
+
+A blocked stdin reader owns only its channel and OS read, never the temporary
+file. The foreground drops the receiver and spool on cancellation without
+waiting for EOF; process exit releases the detached reader. Library callers
+cancelling `read_stdin` must account for that thread until its read unblocks or
+the process exits; this API is intended for the CLI's single stdin consumption.
+No asynchronous runtime or custom unsafe signal code is introduced.
+
+A running codec, color transform, resize or metric operation is not forcibly
+interrupted. Blocked OS I/O, including stdout, sync or filesystem calls, can delay
+exit. Repeated signals remain cancellation requests. There is no fixed latency
+or transactional batch rollback guarantee. SIGKILL/forced termination, crashes
+and power loss bypass cleanup.
+
+### Dependencies and verification
+
+`ctrlc` 3.5.2 with `termination` adds nix/cfg_aliases on Unix and Apple dispatch2
+plus block2/objc2 support packages. Windows enables console/threading features
+in the already locked windows-sys 0.61.2. No existing package changes version;
+declared MSRVs remain below Rust 1.89. These are native OS signal bindings, with
+no extra native installation or asynchronous runtime required on supported
+hosts. See [DEPENDENCIES.md](DEPENDENCIES.md) and
+[ctrlc's documentation](https://docs.rs/ctrlc/3.5.2/ctrlc/).
+
+Tests independently decode/score stdin results and compare file/stdin input bytes
+in both search modes across RGB/RGBA, JPEG/BMP/WebP, EXIF, ICC, 16-bit/HDR and
+nondefault tuning. They verify unchanged sources, waiting for EOF, malformed,
+animated and empty streams, early destination/batch rejection, literal `./-`,
+inclusive caps, cap precedence, strict skips/equal sizes and cleanup. Unit tests
+inject stream errors, missing EOF and a small spool cap to verify the exact
+inclusive boundary without writing 256 MiB. Shared-token tests cover cancelled
+preparation/trials/output, stopped batch scheduling, cancellation after staging,
+and partially written payloads. Unix process tests send all three supported
+signals during blocked stdin and an active exhaustive search, checking exit 130,
+destination preservation and no temporary files. Windows runs the shared-token
+and stream tests; actual console event delivery is not exercised by these tests.
+
+Release smoke sends all six existing preparation fixtures through actual stdin
+pipes to file/stdout, compares with independently scored file-input bytes,
+checks quiet behavior and verifies no spool files in an isolated temporary
+directory. Native CI runs the expanded tests and smoke checks on all three hosts.
+
+Local Linux validation with Rust 1.89.0 passed formatting, Clippy with denied
+warnings, all 137 all-target tests, the locked/offline release build and expanded
+release smoke checks. Existing fixture output scores/bytes remain unchanged.

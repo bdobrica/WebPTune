@@ -6,14 +6,19 @@
 //! quantized to eight bits; metadata is discarded. Animation is rejected.
 
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{self, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::Path;
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::time::Duration;
 
 use anyhow::{bail, ensure, Context, Result};
 use image::codecs::{
     bmp::BmpDecoder, hdr::HdrDecoder, jpeg::JpegDecoder, png::PngDecoder, webp::WebPDecoder,
 };
 use image::metadata::Orientation;
+use tempfile::NamedTempFile;
+
+use crate::cancel::Cancellation;
 use image::{
     imageops, DynamicImage, GenericImageView, ImageDecoder, ImageFormat, ImageReader, Limits,
     RgbImage, RgbaImage,
@@ -92,17 +97,57 @@ pub fn load(path: &Path, scale: f64) -> Result<PreparedImage> {
 ///
 /// Uses the same pre-decode limits and single Lanczos3 pass as [`load`].
 pub fn load_with_resize(path: &Path, resize: Resize) -> Result<PreparedImage> {
-    // Validate library callers before any I/O, just as Clap validates CLI input.
+    load_with_cancellation(path, resize, &Cancellation::default())
+}
+
+/// Prepare a file with checks around I/O and expensive processing stages.
+pub fn load_with_cancellation(
+    path: &Path,
+    resize: Resize,
+    cancel: &Cancellation,
+) -> Result<PreparedImage> {
+    cancel.check()?;
     resize.dimensions((1, 1))?;
     let file =
         File::open(path).with_context(|| format!("cannot read input '{}'", path.display()))?;
-    let reader = ImageReader::new(BufReader::new(file))
-        .with_guessed_format()
-        .with_context(|| format!("cannot identify input '{}'", path.display()))?;
+    load_reader(file, resize, cancel)
+        .with_context(|| format!("cannot prepare input '{}'", path.display()))
+}
+
+struct CheckedReader<'a, R> {
+    inner: R,
+    cancel: &'a Cancellation,
+}
+impl<R: Read> Read for CheckedReader<'_, R> {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        self.cancel.check_io()?;
+        self.inner.read(bytes)
+    }
+}
+impl<R: Seek> Seek for CheckedReader<'_, R> {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        self.cancel.check_io()?;
+        self.inner.seek(pos)
+    }
+}
+
+fn load_reader<R: Read + Seek>(
+    reader: R,
+    resize: Resize,
+    cancel: &Cancellation,
+) -> Result<PreparedImage> {
+    cancel.check()?;
+    resize.dimensions((1, 1))?;
+    let reader = ImageReader::new(BufReader::new(CheckedReader {
+        inner: reader,
+        cancel,
+    }))
+    .with_guessed_format()
+    .context("cannot identify input format")?;
     let format = reader.format();
     let mut reader = reader.into_inner();
     let mut color = None;
-    let decoder: Box<dyn ImageDecoder> = match format {
+    let decoder: Box<dyn ImageDecoder + '_> = match format {
         Some(ImageFormat::Png) => {
             color = Some(SourceColor::png(&mut reader)?);
             let decoder = PngDecoder::with_limits(reader, decoder_limits())
@@ -142,15 +187,16 @@ pub fn load_with_resize(path: &Path, resize: Resize) -> Result<PreparedImage> {
         Some(format) => bail!("unsupported input format {format:?}; supported still formats: JPEG, PNG, WebP, BMP, Radiance HDR"),
         None => bail!("unsupported or unrecognized input format; supported still formats: JPEG, PNG, WebP, BMP, Radiance HDR"),
     };
-    prepare(decoder, resize, color)
-        .with_context(|| format!("cannot prepare input '{}'", path.display()))
+    prepare(decoder, resize, color, cancel)
 }
 
 fn prepare(
-    mut decoder: Box<dyn ImageDecoder>,
+    mut decoder: Box<dyn ImageDecoder + '_>,
     resize: Resize,
     color: Option<SourceColor>,
+    cancel: &Cancellation,
 ) -> Result<PreparedImage> {
+    cancel.check()?;
     let original_dimensions = decoder.dimensions();
     let orientation = decoder
         .orientation()
@@ -205,11 +251,14 @@ fn prepare(
         source.dimensions() == original_dimensions,
         "decoded dimensions differ from header"
     );
+    cancel.check()?;
     source.apply_orientation(orientation);
+    cancel.check()?;
     if float {
         source = color.convert(source)?;
     }
 
+    cancel.check()?;
     // Also skip resampling when rounding leaves the dimensions unchanged.
     let processed = if dimensions == oriented_dimensions {
         source
@@ -218,7 +267,9 @@ fn prepare(
     } else {
         source.resize_exact(dimensions.0, dimensions.1, imageops::FilterType::Lanczos3)
     };
+    cancel.check()?;
     let pixels = normalize(processed);
+    cancel.check()?;
     Ok(PreparedImage {
         original_dimensions,
         pixels,
@@ -264,5 +315,155 @@ fn normalize(image: DynamicImage) -> Pixels {
         Pixels::Rgb(DynamicImage::ImageRgba8(rgba).into_rgb8())
     } else {
         Pixels::Rgba(rgba)
+    }
+}
+
+/// Compressed stdin is disk-spooled, never accumulated in memory.
+pub const MAX_STDIN_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Owned stdin spool; dropping it removes the temporary file.
+pub struct SpooledInput {
+    file: NamedTempFile,
+    bytes: u64,
+}
+impl SpooledInput {
+    pub fn bytes(&self) -> u64 {
+        self.bytes
+    }
+    pub fn prepare(&self, resize: Resize, cancel: &Cancellation) -> Result<PreparedImage> {
+        load_with_cancellation(self.file.path(), resize, cancel)
+    }
+}
+
+/// Read one image through EOF. A bounded reader thread permits cancellation even
+/// while stdin is blocked. It owns no temporary file and is detached on cancel;
+/// the CLI exits afterward, releasing the OS read and all process resources.
+/// Intended for one CLI consumption: library cancellation can leave the read
+/// thread blocked until stdin becomes readable or the process exits.
+pub fn read_stdin(cancel: &Cancellation) -> Result<SpooledInput> {
+    cancel.check()?;
+    let (sender, receiver) = mpsc::sync_channel(1);
+    std::thread::Builder::new()
+        .name("stdin-reader".into())
+        .spawn(move || {
+            let mut stdin = io::stdin().lock();
+            loop {
+                let mut bytes = vec![0; 64 * 1024];
+                let result = match stdin.read(&mut bytes) {
+                    Ok(n) => {
+                        bytes.truncate(n);
+                        Ok(bytes)
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(error) => Err(error),
+                };
+                let done = result.as_ref().map_or(true, |bytes| bytes.is_empty());
+                if sender.send(result).is_err() || done {
+                    break;
+                }
+            }
+        })
+        .context("cannot start stdin reader")?;
+    spool(receiver, cancel, MAX_STDIN_BYTES)
+}
+
+fn spool(
+    receiver: mpsc::Receiver<io::Result<Vec<u8>>>,
+    cancel: &Cancellation,
+    limit: u64,
+) -> Result<SpooledInput> {
+    let mut file = tempfile::Builder::new()
+        .prefix("webptune-stdin-")
+        .tempfile()
+        .context("cannot create stdin temporary file")?;
+    let mut bytes = 0u64;
+    loop {
+        cancel.check()?;
+        match receiver.recv_timeout(Duration::from_millis(25)) {
+            Ok(chunk) => {
+                let chunk = chunk.context("cannot read stdin")?;
+                if chunk.is_empty() {
+                    break;
+                }
+                bytes = bytes
+                    .checked_add(chunk.len() as u64)
+                    .context("stdin size overflow")?;
+                ensure!(
+                    bytes <= limit,
+                    "stdin exceeds compressed input limit of {limit} bytes"
+                );
+                cancel.check()?;
+                file.write_all(&chunk).context("cannot spool stdin")?;
+            }
+            Err(RecvTimeoutError::Timeout) => continue,
+            Err(RecvTimeoutError::Disconnected) => bail!("stdin reader stopped before EOF"),
+        }
+    }
+    cancel.check()?;
+    ensure!(bytes > 0, "stdin is empty; provide a supported still image");
+    file.flush().context("cannot flush stdin temporary file")?;
+    Ok(SpooledInput { file, bytes })
+}
+
+#[cfg(test)]
+mod stream_tests {
+    use super::*;
+
+    #[test]
+    fn spooling_enforces_exact_byte_boundary_and_cleans_up() {
+        let bytes = include_bytes!("../tests/fixtures/rgba.png");
+        for limit in [bytes.len() as u64 - 1, bytes.len() as u64] {
+            let (tx, rx) = mpsc::channel();
+            tx.send(Ok(bytes[..10].to_vec())).unwrap();
+            tx.send(Ok(bytes[10..].to_vec())).unwrap();
+            tx.send(Ok(Vec::new())).unwrap();
+            let cancel = Cancellation::default();
+            let result = spool(rx, &cancel, limit);
+            if limit < bytes.len() as u64 {
+                assert!(result.err().unwrap().to_string().contains("stdin exceeds"));
+            } else {
+                let input = result.unwrap();
+                let path = input.file.path().to_owned();
+                assert_eq!(input.bytes(), limit);
+                let reference = input.prepare(Resize::Scale(1.0), &cancel).unwrap();
+                assert_eq!(reference.pixels().dimensions(), (17, 11));
+                assert!(reference.pixels().has_alpha());
+                assert_eq!(std::fs::read(&path).unwrap(), bytes);
+                drop(input);
+                assert!(!path.exists());
+            }
+        }
+    }
+
+    #[test]
+    fn spooling_rejects_empty_read_failure_and_missing_eof() {
+        for chunks in [
+            vec![Ok(Vec::new())],
+            vec![Err(io::Error::other("injected read failure"))],
+            vec![Ok(vec![1, 2])],
+        ] {
+            let (tx, rx) = mpsc::channel();
+            for chunk in chunks {
+                tx.send(chunk).unwrap();
+            }
+            drop(tx);
+            assert!(spool(rx, &Cancellation::default(), 10).is_err());
+        }
+    }
+
+    #[test]
+    fn spooling_cancels_while_waiting_for_an_open_stream() {
+        let (_tx, rx) = mpsc::channel();
+        let cancel = Cancellation::default();
+        std::thread::scope(|scope| {
+            let worker = scope.spawn(|| spool(rx, &cancel, 10));
+            cancel.cancel();
+            assert!(worker
+                .join()
+                .unwrap()
+                .err()
+                .unwrap()
+                .is::<crate::cancel::Cancelled>());
+        });
     }
 }
